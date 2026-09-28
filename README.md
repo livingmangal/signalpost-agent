@@ -84,9 +84,23 @@ uv run python scripts/run_full_pipeline.py \
 ### Output
 
 The pipeline produces:
-- `out/profiles.jsonl` — Full company profiles with evidence
-- `out/envelopes.jsonl` — Terminal envelopes (competition format)
-- `out/run-report.json` — Run metrics, validation results, and budget tracking
+- `out/profiles.jsonl` — Full company profiles with 14 discovery modules
+- `out/envelopes.jsonl` — Terminal batch envelopes (competition format)
+- `out/contract_envelopes.jsonl` — Minimal contract envelopes conforming to `OUTPUT_CONTRACT.md`
+- `out/observations.jsonl` — Standardized external-footprint observations
+- `out/run-report.json` — Run metrics, validation results, and budget tracking ($0.00 cost)
+
+### Evaluator Profile Inspector
+
+Inspect generated profiles, financial tables, and SHA-256 evidence hashes in the terminal:
+
+```bash
+# 1. View run-level coverage and latency summary:
+uv run python scripts/inspect_profile.py --dir out/smoke
+
+# 2. Inspect an individual company profile card:
+uv run python scripts/inspect_profile.py --file out/smoke/profiles.jsonl --org 810034882
+```
 
 ## Architecture
 

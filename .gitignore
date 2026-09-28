@@ -10,10 +10,10 @@ signalpost-universe.jsonl.gz
 signalpost-starter-kit/
 signalpost-starter-kit.zip
 
-# Output (allow submission artifacts and refresh demo, ignore temporary runs)
+# Output (track competition submission and smoke verification)
 out/*
 !out/submission/
-!out/refresh-demo.json
+!out/smoke/
 snapshots/
 
 # IDE
@@ -25,3 +25,6 @@ snapshots/
 # OS
 .DS_Store
 Thumbs.db
+
+# uv
+uv.lock

@@ -124,6 +124,72 @@ The entire stack is configured to run at **$0.00 run cost**.
   - **API Cost:** **$0.00**
   - **Validation:** **PASSED** (All entity states terminal, zero silent drops).
 
+### Test 5: Pipeline Smoke Test v3 (`smoke-003`) & Minimal Contract Envelopes
+- Input: 3 Norwegian companies ([smoke-companies.jsonl](file:///c:/Users/hiima/Desktop/builderr/smoke-companies.jsonl))
+- Enhancements tested:
+  - Official NAV Arbeidsplassen API job integration
+  - Dual envelope emission: Batch terminal envelopes (`envelopes.jsonl`) + minimal output contract envelopes (`contract_envelopes.jsonl`)
+  - External footprint observation aggregator
+- Command:
+  ```powershell
+  uv run python scripts/run_full_pipeline.py `
+    --organisations smoke-companies.jsonl `
+    --bulk brreg-enheter.csv `
+    --output out/smoke `
+    --run-id smoke-003 `
+    --expected-count 3 `
+    --workers 2
+  ```
+- Output Results:
+  - **Emitted Envelopes:** 3 / 3
+  - **Contract Envelopes:** 3 / 3 (100% valid against `OutputContractEnvelope` schema)
+  - **Outbound Requests:** 26
+  - **Search Queries Used:** 12 / 500
+  - **API Cost:** **$0.00**
+  - **Validation:** **PASSED** (All entity states terminal, zero silent drops).
+
+### Test 6: Evaluator Profile Inspector CLI (`scripts/inspect_profile.py`)
+- Command: `uv run python scripts/inspect_profile.py --dir out/smoke`
+- Result: **PASSED** (Rendered coverage percentages, latency percentiles, and request counts).
+- Command: `uv run python scripts/inspect_profile.py --file out/smoke/profiles.jsonl --org 810034882`
+- Result: **PASSED** (Rendered company card with status badges, financial tables, and SHA-256 evidence hashes).
+
+### Test 7: Full Pytest Regression Suite
+- Command: `uv run pytest`
+- Result: **215 / 215 tests PASSED** in ~5.4s.
+
+### Test 8: Full 1,000-Company Submission Run (`submission-001`)
+- Input: 1,000 Norwegian companies ([data/entry-batch-1000.jsonl](file:///c:/Users/hiima/Desktop/builderr/data/entry-batch-1000.jsonl))
+- Output: `out/submission/`
+- Command:
+  ```powershell
+  uv run python scripts/run_full_pipeline.py `
+    --organisations data/entry-batch-1000.jsonl `
+    --bulk brreg-enheter.csv `
+    --output out/submission `
+    --run-id submission-001 `
+    --expected-count 1000 `
+    --workers 8 `
+    --resume
+  ```
+- Output Results:
+  - **Emitted Envelopes:** 1,000 / 1,000 (100%)
+  - **Contract Envelopes:** 1,000 / 1,000 (100% valid against `OutputContractEnvelope` schema)
+  - **Outbound Requests:** 4,820
+  - **Search Queries Used:** 867
+  - **Latency:** P50: 894 ms, P95: 1,350 ms
+  - **Declared API Cost:** **$0.00 USD (0 NOK)**
+  - **Validation:** **PASSED** (all 6 schema and entity checks true, zero silent drops).
+  - **Inspector Summary:**
+    - Brreg Registry Identity: 1,000 / 1,000 (100.0%)
+    - Annual Accounts: 993 / 1,000 (99.3%)
+    - Leadership & Roles: 1,000 / 1,000 (100.0%)
+    - Subunits / Locations: 1,000 / 1,000 (100.0%)
+    - Annual Report PDF: 996 / 1,000 (99.6%)
+    - Executive Summaries: 1,000 / 1,000 (100.0%)
+    - Verified Websites: 112 / 1,000 (11.2% exact-gated)
+    - News Mentions: 123 / 1,000 (12.3%)
+
 ---
 
 ## 6. Submission Details
@@ -132,6 +198,7 @@ The entire stack is configured to run at **$0.00 run cost**.
 | :--- | :--- |
 | **Batch Size** | 1,000 companies ([data/entry-batch-1000.jsonl](file:///c:/Users/hiima/Desktop/builderr/data/entry-batch-1000.jsonl)) |
 | **One Command to Run** | `uv run python scripts/run_full_pipeline.py --organisations data/entry-batch-1000.jsonl --bulk brreg-enheter.csv --output out/production --run-id entry-1000 --expected-count 1000 --workers 8` |
-| **Model / APIs** | Gemini 2.0 Flash (free tier) / Groq Llama 3.3 70B (free tier) / Brave Search (free tier) / Brreg Open APIs / Google News RSS / Wikipedia |
+| **Inspector Command** | `uv run python scripts/inspect_profile.py --dir out/production` |
+| **Model / APIs** | Gemini 2.0 Flash (free tier) / Groq Llama 3.3 70B (free tier) / Brave Search (free tier) / Brreg Open APIs / NAV Arbeidsplassen API / Google News RSS / Wikipedia |
 | **Expected Run Cost** | **$0.00 USD (0 NOK)** |
 | **Expected Runtime** | ~15–25 minutes for 100 companies; ~1.5–2 hours for 1,000 companies with 8 concurrent workers |

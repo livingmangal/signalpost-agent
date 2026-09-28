@@ -147,6 +147,113 @@ def terminal_envelope(
     }
 
 
+def profile_to_contract_envelope(
+    profile: dict[str, Any],
+    *,
+    run_id: str,
+    started_at: str,
+    completed_at: str,
+    operations: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Build a minimal terminal envelope conforming to OUTPUT_CONTRACT.md schema."""
+    org = profile["organisation_number"]
+    evidence_list: list[dict[str, Any]] = []
+    claims_list: list[dict[str, Any]] = []
+    ev_counter = 0
+
+    evidence_dict = profile.get("evidence", {})
+
+    def add_claim(field: str, value: Any, ev_record: dict[str, Any] | None, default_url: str = "") -> None:
+        nonlocal ev_counter
+        if not ev_record:
+            claims_list.append({
+                "field": field,
+                "value": None,
+                "availability": "not_available",
+                "confidence": 1.0,
+                "evidence_ids": [],
+            })
+            return
+
+        status = ev_record.get("status", "not_available")
+        availability = status if status in ("available", "not_available", "blocked", "not_applicable", "ambiguous", "failed") else "failed"
+
+        ev_counter += 1
+        ev_id = f"ev-{org}-{ev_counter}"
+
+        ev_item = {
+            "id": ev_id,
+            "source_url": ev_record.get("source_url") or default_url or "https://data.brreg.no",
+            "source_class": ev_record.get("source_class") or "official_registry",
+            "retrieved_at": ev_record.get("retrieved_at") or completed_at,
+            "content_sha256": ev_record.get("content_sha256") or ("0" * 64),
+            "claim_span": f"{field}: {str(value)[:100]}" if value else ev_record.get("note", f"{field} checked"),
+        }
+        evidence_list.append(ev_item)
+
+        claims_list.append({
+            "field": field,
+            "value": value if availability == "available" else None,
+            "availability": availability,
+            "confidence": 1.0 if availability == "available" else 0.8,
+            "evidence_ids": [ev_id],
+        })
+
+    # 1. Official registry claims
+    reg_val = (evidence_dict.get("registry") or {}).get("value") or {}
+    add_claim("company_name", reg_val.get("navn") or profile.get("name"), evidence_dict.get("registry"), "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv")
+    add_claim("legal_form", reg_val.get("organisasjonsform"), evidence_dict.get("registry"), "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv")
+    add_claim("nace_industry", reg_val.get("naeringskode1"), evidence_dict.get("registry"), "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv")
+
+    # 2. Website claim
+    web_ev = evidence_dict.get("website")
+    web_val = (web_ev or {}).get("value") or {}
+    add_claim("official_website", web_val.get("canonical_domain") or profile.get("website"), web_ev, str(profile.get("website") or ""))
+
+    # 3. Financial claims
+    fin_ev = evidence_dict.get("financials")
+    fin_records = ((fin_ev or {}).get("value") or {}).get("records") or []
+    latest_fin = fin_records[0] if fin_records else {}
+    add_claim("revenue", latest_fin.get("revenue"), fin_ev, f"https://data.brreg.no/regnskapsregisteret/regnskap/{org}")
+    add_claim("operating_result", latest_fin.get("operating_result"), fin_ev, f"https://data.brreg.no/regnskapsregisteret/regnskap/{org}")
+    add_claim("equity", latest_fin.get("equity"), fin_ev, f"https://data.brreg.no/regnskapsregisteret/regnskap/{org}")
+
+    def _val(mod: str) -> dict[str, Any]:
+        v = (evidence_dict.get(mod) or {}).get("value")
+        return v if isinstance(v, dict) else {}
+
+    # 4. Roles
+    roles_ev = evidence_dict.get("roles")
+    roles_list = _val("roles").get("roles") or []
+    ceo_name = next((r.get("name") for r in roles_list if "daglig leder" in str(r.get("role") or "").lower()), None)
+    add_claim("ceo", ceo_name, roles_ev, f"https://data.brreg.no/enhetsregisteret/api/enheter/{org}/roller")
+
+    # 5. Footprint
+    add_claim("jobs", _val("jobs").get("count", 0), evidence_dict.get("jobs"))
+    add_claim("news_activity", _val("news_activity").get("count", 0), evidence_dict.get("news_activity"))
+    add_claim("profile_summary", _val("profile_summary").get("summary"), evidence_dict.get("profile_summary"))
+
+    ops = operations or {}
+    return {
+        "organisation_number": org,
+        "run": {
+            "run_id": run_id,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "terminal_status": "completed",
+        },
+        "claims": claims_list,
+        "evidence": evidence_list,
+        "changes": profile.get("changes", []),
+        "errors": profile.get("errors", []),
+        "operations": {
+            "requests": ops.get("requests", 0),
+            "runtime_ms": ops.get("elapsed_ms") or ops.get("runtime_ms", 0),
+            "third_party_cost_usd": 0.0,
+        },
+    }
+
+
 def validate_envelopes(envelopes: list[dict[str, Any]], expected_count: int) -> dict[str, Any]:
     orgs = [item.get("organisation_number") for item in envelopes]
     invalid_states = [

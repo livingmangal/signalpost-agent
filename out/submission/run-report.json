@@ -1,0 +1,57 @@
+{
+  "run_id": "submission-001",
+  "started_at": "2026-09-28T13:27:04.530720Z",
+  "completed_at": "2026-09-28T14:08:16.375901Z",
+  "expected_count": 1000,
+  "emitted_envelopes": 1000,
+  "resumed_profiles": 450,
+  "profiles_fetched_this_run": 550,
+  "modules": [
+    "registry",
+    "accounting_obligation",
+    "registry_live",
+    "financials",
+    "financial_history",
+    "roles",
+    "group",
+    "locations",
+    "website",
+    "jobs",
+    "news_activity",
+    "social_profiles",
+    "annual_report_pdf",
+    "profile_summary"
+  ],
+  "registry": {
+    "registry_snapshot_sha256": "4ff19012c86ecf16bd7caeaea6735b2672eea904c8d52214de76090302cdfd70",
+    "registry_rows_scanned": 1173447,
+    "requested": 1000,
+    "selected": 1000
+  },
+  "operations": {
+    "requests": 4820,
+    "bytes": 67274569,
+    "search_queries": 0,
+    "p50_ms": 894,
+    "p95_ms": 1350,
+    "search_queries_used": 867,
+    "third_party_cost_usd": 0.0
+  },
+  "validation": {
+    "passed": true,
+    "checks": {
+      "exact_expected_count": true,
+      "unique_organisation_numbers": true,
+      "all_entity_states_terminal": true,
+      "all_module_states_terminal": true,
+      "zero_silent_drops": true,
+      "schema_valid": true
+    },
+    "invalid_states": [],
+    "schema_errors": []
+  },
+  "api_keys_used": {
+    "gemini": true,
+    "brave": false
+  }
+}
