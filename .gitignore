@@ -10,10 +10,9 @@ signalpost-universe.jsonl.gz
 signalpost-starter-kit/
 signalpost-starter-kit.zip
 
-# Output (track competition submission and smoke verification)
+# Output (track final 1,000-company competition submission only)
 out/*
 !out/submission/
-!out/smoke/
 snapshots/
 
 # IDE
