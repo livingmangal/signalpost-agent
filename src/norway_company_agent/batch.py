@@ -178,6 +178,12 @@ def profile_to_contract_envelope(
         status = ev_record.get("status", "not_available")
         availability = status if status in ("available", "not_available", "blocked", "not_applicable", "ambiguous", "failed") else "failed"
 
+        # If value is empty/None, mark availability as not_available
+        if value is None or (isinstance(value, str) and not value.strip()) or (isinstance(value, (list, dict)) and len(value) == 0):
+            if availability == "available":
+                availability = "not_available"
+            value = None
+
         ev_counter += 1
         ev_id = f"ev-{org}-{ev_counter}"
 
@@ -187,7 +193,7 @@ def profile_to_contract_envelope(
             "source_class": ev_record.get("source_class") or "official_registry",
             "retrieved_at": ev_record.get("retrieved_at") or completed_at,
             "content_sha256": ev_record.get("content_sha256") or ("0" * 64),
-            "claim_span": f"{field}: {str(value)[:100]}" if value else ev_record.get("note", f"{field} checked"),
+            "claim_span": f"{field}: {str(value)[:100]}" if value is not None else ev_record.get("note", f"{field} checked"),
         }
         evidence_list.append(ev_item)
 
@@ -200,10 +206,38 @@ def profile_to_contract_envelope(
         })
 
     # 1. Official registry claims
-    reg_val = (evidence_dict.get("registry") or {}).get("value") or {}
-    add_claim("company_name", reg_val.get("navn") or profile.get("name"), evidence_dict.get("registry"), "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv")
-    add_claim("legal_form", reg_val.get("organisasjonsform"), evidence_dict.get("registry"), "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv")
-    add_claim("nace_industry", reg_val.get("naeringskode1"), evidence_dict.get("registry"), "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv")
+    reg_ev = evidence_dict.get("registry")
+    reg_val = (reg_ev or {}).get("value") or {}
+    reg_url = "https://data.brreg.no/enhetsregisteret/api/enheter/lastned/csv"
+    add_claim("company_name", reg_val.get("navn") or profile.get("name"), reg_ev, reg_url)
+
+    legal_form = profile.get("legal_form") or reg_val.get("organisasjonsform.kode") or reg_val.get("organisasjonsform")
+    add_claim("legal_form", legal_form, reg_ev, reg_url)
+
+    ind_code = profile.get("industry_code") or reg_val.get("naeringskode1.kode") or reg_val.get("naeringskode1")
+    ind_label = profile.get("industry_label") or reg_val.get("naeringskode1.beskrivelse") or ""
+    nace_str = f"{ind_code} - {ind_label}".strip(" -") if ind_code or ind_label else None
+    add_claim("nace_industry", nace_str, reg_ev, reg_url)
+
+    addr_parts = [
+        reg_val.get("forretningsadresse.adresse") or reg_val.get("postadresse.adresse"),
+        reg_val.get("forretningsadresse.postnummer") or reg_val.get("postadresse.postnummer"),
+        reg_val.get("forretningsadresse.poststed") or reg_val.get("postadresse.poststed"),
+        reg_val.get("forretningsadresse.kommune") or profile.get("municipality"),
+    ]
+    addr_str = ", ".join(str(p).strip() for p in addr_parts if p and str(p).strip()) or None
+    add_claim("registered_office", addr_str, reg_ev, reg_url)
+
+    reg_date = reg_val.get("registreringsdatoenhetsregisteret") or reg_val.get("stiftelsesdato") or profile.get("registration_date")
+    add_claim("registration_date", reg_date, reg_ev, reg_url)
+
+    emp_count = profile.get("employees")
+    if emp_count is None and reg_val.get("antallAnsatte") is not None and str(reg_val.get("antallAnsatte")).strip():
+        try:
+            emp_count = int(reg_val.get("antallAnsatte"))
+        except (ValueError, TypeError):
+            emp_count = None
+    add_claim("employee_count", emp_count, reg_ev, reg_url)
 
     # 2. Website claim
     web_ev = evidence_dict.get("website")
@@ -225,12 +259,29 @@ def profile_to_contract_envelope(
     # 4. Roles
     roles_ev = evidence_dict.get("roles")
     roles_list = _val("roles").get("roles") or []
+    roles_url = f"https://data.brreg.no/enhetsregisteret/api/enheter/{org}/roller"
     ceo_name = next((r.get("name") for r in roles_list if "daglig leder" in str(r.get("role") or "").lower()), None)
-    add_claim("ceo", ceo_name, roles_ev, f"https://data.brreg.no/enhetsregisteret/api/enheter/{org}/roller")
+    add_claim("ceo", ceo_name, roles_ev, roles_url)
 
-    # 5. Footprint
-    add_claim("jobs", _val("jobs").get("count", 0), evidence_dict.get("jobs"))
-    add_claim("news_activity", _val("news_activity").get("count", 0), evidence_dict.get("news_activity"))
+    chair_name = next((r.get("name") for r in roles_list if r.get("role_code") == "LEDE" or ("leder" in str(r.get("role") or "").lower() and "daglig" not in str(r.get("role") or "").lower())), None)
+    add_claim("board_chair", chair_name, roles_ev, roles_url)
+
+    board_members = [r.get("name") for r in roles_list if r.get("group_code") == "STYR" and not r.get("inactive") and r.get("name")]
+    add_claim("board_members", ", ".join(board_members) if board_members else None, roles_ev, roles_url)
+
+    # 5. Locations / Subunits
+    loc_ev = evidence_dict.get("locations")
+    loc_list = _val("locations").get("locations") or []
+    subunits_count = len(loc_list) if loc_list else (_val("locations").get("count") or 0)
+    add_claim("subunits_count", subunits_count, loc_ev, f"https://data.brreg.no/enhetsregisteret/api/underenheter?overordnetEnhet={org}")
+
+    # 6. Footprint
+    jobs_count = _val("jobs").get("count", 0)
+    add_claim("jobs", jobs_count if jobs_count > 0 else None, evidence_dict.get("jobs"))
+
+    news_count = _val("news_activity").get("count", 0)
+    add_claim("news_activity", news_count if news_count > 0 else None, evidence_dict.get("news_activity"))
+
     add_claim("profile_summary", _val("profile_summary").get("summary"), evidence_dict.get("profile_summary"))
 
     ops = operations or {}

@@ -20,8 +20,9 @@ from .evidence import evidence, utc_now
 def fetch_google_news_rss(
     company_name: str,
     max_results: int = 10,
+    municipality: str = "",
 ) -> list[dict[str, Any]]:
-    """Fetch news articles from Google News RSS feed."""
+    """Fetch news articles from Google News RSS feed localized for Norway."""
     clean_name = re.sub(
         r"\b(AS|ASA|ANS|DA|ENK|NUF)\b", "", company_name, flags=re.IGNORECASE
     ).strip()
@@ -29,35 +30,48 @@ def fetch_google_news_rss(
     if not clean_name or len(clean_name) < 3:
         return []
 
-    query = urllib.parse.quote(f'"{clean_name}" Norway')
-    url = f"https://news.google.com/rss/search?q={query}&hl=en&gl=NO&ceid=NO:en"
+    articles: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
 
-    try:
-        import feedparser
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "builderr-signalpost/1.0 (+https://builderr.ai)",
-        })
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            content = resp.read()
+    queries = [urllib.parse.quote(f'"{clean_name}"')]
+    if municipality and municipality.strip():
+        clean_muni = re.sub(r"\d+", "", municipality).strip()
+        if len(clean_muni) >= 3:
+            queries.append(urllib.parse.quote(f'"{clean_name}" {clean_muni}'))
 
-        feed = feedparser.parse(content)
-        articles: list[dict[str, Any]] = []
-
-        for entry in feed.entries[:max_results]:
-            published = entry.get("published", "")
-            articles.append({
-                "title": entry.get("title", ""),
-                "url": entry.get("link", ""),
-                "published": published,
-                "source_name": entry.get("source", {}).get("title", "")
-                               if hasattr(entry.get("source", {}), "get")
-                               else str(entry.get("source", "")),
-                "summary": entry.get("summary", "")[:300],
+    import feedparser
+    for q in queries[:2]:
+        url = f"https://news.google.com/rss/search?q={q}&hl=no&gl=NO&ceid=NO:no"
+        try:
+            req = urllib.request.Request(url, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             })
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                content = resp.read()
 
-        return articles
-    except Exception:
-        return []
+            feed = feedparser.parse(content)
+            for entry in feed.entries:
+                link = entry.get("link", "")
+                if link and link not in seen_urls:
+                    seen_urls.add(link)
+                    published = entry.get("published", "")
+                    articles.append({
+                        "title": entry.get("title", ""),
+                        "url": link,
+                        "published": published,
+                        "source_name": entry.get("source", {}).get("title", "")
+                                       if hasattr(entry.get("source", {}), "get")
+                                       else str(entry.get("source", "")),
+                        "summary": entry.get("summary", "")[:300],
+                    })
+                    if len(articles) >= max_results:
+                        break
+            if len(articles) >= max_results:
+                break
+        except Exception:
+            continue
+
+    return articles[:max_results]
 
 
 def extract_news_from_website(website_value: dict[str, Any]) -> list[dict[str, Any]]:
@@ -89,12 +103,13 @@ def fetch_company_news(
     Returns an evidence record.
     """
     name = profile.get("name", "")
+    municipality = profile.get("municipality", "")
     retrieved_at = utc_now()
 
     all_news: list[dict[str, Any]] = []
 
-    # 1. Google News RSS
-    google_news = fetch_google_news_rss(name)
+    # 1. Google News RSS (Norwegian edition)
+    google_news = fetch_google_news_rss(name, municipality=municipality)
     for item in google_news:
         item["source_type"] = "google_news_rss"
     all_news.extend(google_news)
@@ -104,6 +119,25 @@ def fetch_company_news(
     website_value = website_ev.get("value") or {}
     website_news = extract_news_from_website(website_value)
     all_news.extend(website_news)
+
+    # 3. Free search fallback for Norwegian news if RSS and website found 0 items
+    if not all_news:
+        clean_name = re.sub(r"\b(AS|ASA|ANS|DA|ENK|NUF)\b", "", name, flags=re.IGNORECASE).strip()
+        if clean_name and len(clean_name) >= 3:
+            try:
+                from .search_api import search_duckduckgo
+                search_items = search_duckduckgo(f'"{clean_name}" nyheter', max_results=3)
+                for s in search_items:
+                    all_news.append({
+                        "title": s.title,
+                        "url": s.url,
+                        "summary": s.snippet[:300],
+                        "published": "",
+                        "source_name": s.source,
+                        "source_type": "search_news_fallback",
+                    })
+            except Exception:
+                pass
 
     if all_news:
         return evidence(

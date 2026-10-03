@@ -85,77 +85,94 @@ def search_duckduckgo(query: str, max_results: int = 8) -> list[SearchResult]:
         return []
 
 
+def _get_api_keys(env_var: str) -> list[str]:
+    raw = os.environ.get(env_var, "").strip()
+    return [k.strip() for k in raw.split(",") if k.strip()]
+
+
 def search_brave(query: str, max_results: int = 8) -> list[SearchResult]:
-    """Search using Brave Search API (free tier: 2,000 queries/month)."""
-    api_key = os.environ.get("BRAVE_API_KEY", "").strip()
-    if not api_key:
+    """Search using Brave Search API (supports single key or comma-separated pool)."""
+    keys = _get_api_keys("BRAVE_API_KEY")
+    if not keys:
         return []
     budget = get_search_budget()
     if budget.brave_used >= budget.max_brave_queries:
         return []
     budget.queries_used += 1
     budget.brave_used += 1
-    try:
-        url = f"https://api.search.brave.com/res/v1/web/search?q={urllib.parse.quote(query)}&count={max_results}"
-        req = urllib.request.Request(url, headers={
-            "Accept": "application/json",
-            "X-Subscription-Token": api_key,
-            "User-Agent": "BuilderrAgent/1.0",
-        })
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        results = data.get("web", {}).get("results", [])
-        return [
-            SearchResult(
-                title=r.get("title", ""),
-                url=r.get("url", ""),
-                snippet=r.get("description", ""),
-                source="brave",
-            )
-            for r in results[:max_results]
-        ]
-    except Exception:
-        return []
+
+    for api_key in keys:
+        try:
+            url = f"https://api.search.brave.com/res/v1/web/search?q={urllib.parse.quote(query)}&count={max_results}"
+            req = urllib.request.Request(url, headers={
+                "Accept": "application/json",
+                "X-Subscription-Token": api_key,
+                "User-Agent": "BuilderrAgent/1.0",
+            })
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("web", {}).get("results", [])
+            return [
+                SearchResult(
+                    title=r.get("title", ""),
+                    url=r.get("url", ""),
+                    snippet=r.get("description", ""),
+                    source="brave",
+                )
+                for r in results[:max_results]
+            ]
+        except urllib.error.HTTPError as exc:
+            if exc.code in {429, 403}:
+                continue
+        except Exception:
+            continue
+    return []
 
 
 def search_tavily(query: str, max_results: int = 5) -> list[SearchResult]:
-    """Search using Tavily Search API (free tier: 1,000 queries/month)."""
-    api_key = os.environ.get("TAVILY_API_KEY", "").strip()
-    if not api_key:
+    """Search using Tavily Search API (supports single key or comma-separated pool)."""
+    keys = _get_api_keys("TAVILY_API_KEY")
+    if not keys:
         return []
     budget = get_search_budget()
     if budget.tavily_used >= budget.max_tavily_queries:
         return []
     budget.queries_used += 1
     budget.tavily_used += 1
-    try:
-        url = "https://api.tavily.com/search"
-        payload = json.dumps({
-            "api_key": api_key,
-            "query": query,
-            "search_depth": "basic",
-            "max_results": max_results,
-        }).encode("utf-8")
-        req = urllib.request.Request(
-            url,
-            data=payload,
-            headers={"Content-Type": "application/json", "User-Agent": "BuilderrAgent/1.0"},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        results = data.get("results", [])
-        return [
-            SearchResult(
-                title=r.get("title", ""),
-                url=r.get("url", ""),
-                snippet=r.get("content", ""),
-                source="tavily",
+
+    for api_key in keys:
+        try:
+            url = "https://api.tavily.com/search"
+            payload = json.dumps({
+                "api_key": api_key,
+                "query": query,
+                "search_depth": "basic",
+                "max_results": max_results,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                url,
+                data=payload,
+                headers={"Content-Type": "application/json", "User-Agent": "BuilderrAgent/1.0"},
+                method="POST",
             )
-            for r in results[:max_results]
-        ]
-    except Exception:
-        return []
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            results = data.get("results", [])
+            return [
+                SearchResult(
+                    title=r.get("title", ""),
+                    url=r.get("url", ""),
+                    snippet=r.get("content", ""),
+                    source="tavily",
+                )
+                for r in results[:max_results]
+            ]
+        except urllib.error.HTTPError as exc:
+            if exc.code in {429, 403}:
+                continue
+        except Exception:
+            continue
+    return []
 
 
 def search_serpapi(query: str, max_results: int = 5) -> list[SearchResult]:
@@ -283,18 +300,22 @@ def discover_website_candidates(
     """
     import tldextract
 
-    results = search_company(company_name, org_number, include_site_queries=False)
     candidates: dict[str, dict[str, Any]] = {}
 
-    # If registry has a website, it's the top candidate
-    if registry_website:
-        url = registry_website if "://" in registry_website else f"https://{registry_website}"
-        candidates[url.rstrip("/").lower()] = {
+    # If registry has a website, it's the top authoritative candidate - return immediately to save quota
+    if registry_website and registry_website.strip():
+        reg_clean = registry_website.strip()
+        url = reg_clean if "://" in reg_clean else f"https://{reg_clean}"
+        norm_key = url.rstrip("/").lower()
+        candidates[norm_key] = {
             "url": url,
             "source": "official_registry",
             "confidence": 0.95,
             "signals": ["registry_listed"],
         }
+        return [candidates[norm_key]]
+
+    results = search_company(company_name, org_number, include_site_queries=False)
 
     for r in results:
         try:

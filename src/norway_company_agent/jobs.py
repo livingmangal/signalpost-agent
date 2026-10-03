@@ -57,46 +57,60 @@ def fetch_nav_arbeidsplassen_jobs(
         r"\b(AS|ASA|ANS|DA|ENK|NUF)\b", "", company_name, flags=re.IGNORECASE
     ).strip()
 
-    if not clean_name:
-        return jobs
-
     import httpx
     url = "https://arbeidsplassen.nav.no/stillinger/api/search"
-    target_tokens = set(re.findall(r"\w+", clean_name.casefold()))
+    target_tokens = set(re.findall(r"\w+", clean_name.casefold())) if clean_name else set()
 
-    try:
-        response = httpx.get(
-            url,
-            params={"q": f'"{clean_name}"'},
-            headers={"User-Agent": "BuilderrAgent/1.0 (NLOD-open-data)"},
-            timeout=4.0,
-        )
-        if response.status_code == 200:
-            data = response.json()
-            hits = data.get("hits", {}).get("hits", [])
-            for hit in hits[:10]:
-                source = hit.get("_source", {})
-                employer = source.get("employer", {})
-                emp_name = str(employer.get("name", "")).casefold()
-                emp_tokens = set(re.findall(r"\w+", emp_name))
-                
-                # Check identity gate: employer name overlap or org match
-                if target_tokens and (target_tokens.issubset(emp_tokens) or len(target_tokens & emp_tokens) >= max(1, len(target_tokens) - 1)):
-                    uuid = source.get("uuid")
-                    title = source.get("title")
-                    locations = source.get("locationList") or []
-                    loc_str = locations[0].get("city") if locations else None
-                    if title and uuid:
-                        jobs.append({
-                            "title": title,
-                            "url": f"https://arbeidsplassen.nav.no/stillinger/stilling/{uuid}",
-                            "location": loc_str,
-                            "published": source.get("published"),
-                            "platform": "arbeidsplassen.nav.no",
-                            "source_type": "official_job_registry",
-                        })
-    except Exception:
-        pass
+    queries = []
+    if clean_name:
+        queries.append({"q": f'"{clean_name}"'})
+    if org_number:
+        queries.append({"q": str(org_number).strip()})
+
+    seen_uuids = set()
+    for q_params in queries:
+        try:
+            response = httpx.get(
+                url,
+                params=q_params,
+                headers={"User-Agent": "BuilderrAgent/1.0 (NLOD-open-data)"},
+                timeout=3.5,
+            )
+            if response.status_code == 200:
+                data = response.json()
+                hits = data.get("hits", {}).get("hits", [])
+                for hit in hits[:10]:
+                    source = hit.get("_source", {})
+                    employer = source.get("employer", {})
+                    emp_name = str(employer.get("name", "")).casefold()
+                    emp_org = str(employer.get("orgnr", "")).strip()
+                    emp_tokens = set(re.findall(r"\w+", emp_name))
+
+                    # Check identity gate: exact org match OR employer name token overlap
+                    is_match = False
+                    if org_number and emp_org == str(org_number).strip():
+                        is_match = True
+                    elif target_tokens and (target_tokens.issubset(emp_tokens) or len(target_tokens & emp_tokens) >= max(1, len(target_tokens) - 1)):
+                        is_match = True
+
+                    if is_match:
+                        uuid = source.get("uuid")
+                        if uuid and uuid not in seen_uuids:
+                            seen_uuids.add(uuid)
+                            title = source.get("title")
+                            locations = source.get("locationList") or []
+                            loc_str = locations[0].get("city") if locations else None
+                            if title:
+                                jobs.append({
+                                    "title": title,
+                                    "url": f"https://arbeidsplassen.nav.no/stillinger/stilling/{uuid}",
+                                    "location": loc_str,
+                                    "published": source.get("published"),
+                                    "platform": "arbeidsplassen.nav.no",
+                                    "source_type": "official_job_registry",
+                                })
+        except Exception:
+            pass
 
     return jobs
 
