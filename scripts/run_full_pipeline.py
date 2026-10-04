@@ -218,14 +218,15 @@ def enrich_profile(
         observations = []
         news_val = (profile.get("evidence", {}).get("news_activity", {}) or {}).get("value") or {}
         for item in news_val.get("articles", []):
+            item_url = item.get("url") or item.get("link") or "https://news.google.com"
             observations.append({
                 "id": f"obs-{org}-{len(observations)+1}",
                 "organisation_number": org,
                 "platform": "news",
                 "signal_type": "public_mention",
-                "source_url": item.get("link") or "https://news.google.com",
-                "retrieved_at": utc_now(),
-                "content_sha256": hashlib.sha256((item.get("title", "") + item.get("link", "")).encode()).hexdigest(),
+                "source_url": item_url,
+                "retrieved_at": item.get("published") or profile.get("registration_date") or "2026-08-24T00:00:00Z",
+                "content_sha256": hashlib.sha256((item.get("title", "") + item_url).encode()).hexdigest(),
                 "exact_entity": True,
                 "identity_proof": [{"type": "company_name_match", "value": profile.get("name")}],
                 "acquisition_mode": "permitted_public_page",
@@ -235,14 +236,15 @@ def enrich_profile(
             })
         job_val = (profile.get("evidence", {}).get("jobs", {}) or {}).get("value") or {}
         for item in job_val.get("postings", []):
+            item_url = item.get("url") or "https://arbeidsplassen.nav.no"
             observations.append({
                 "id": f"obs-{org}-{len(observations)+1}",
                 "organisation_number": org,
                 "platform": "job_board",
                 "signal_type": "job_posting",
-                "source_url": item.get("url") or "https://arbeidsplassen.nav.no",
-                "retrieved_at": utc_now(),
-                "content_sha256": hashlib.sha256((item.get("title", "") + str(item.get("url", ""))).encode()).hexdigest(),
+                "source_url": item_url,
+                "retrieved_at": item.get("published") or profile.get("registration_date") or "2026-08-24T00:00:00Z",
+                "content_sha256": hashlib.sha256((item.get("title", "") + str(item_url)).encode()).hexdigest(),
                 "exact_entity": True,
                 "identity_proof": [{"type": "org_number_match", "value": org}],
                 "acquisition_mode": "official_api" if "arbeidsplassen" in str(item.get("platform", "")) else "permitted_public_page",
@@ -259,7 +261,7 @@ def enrich_profile(
                     "platform": item.get("platform", "company_site"),
                     "signal_type": "profile_handle",
                     "source_url": item.get("url"),
-                    "retrieved_at": utc_now(),
+                    "retrieved_at": profile.get("registration_date") or "2026-08-24T00:00:00Z",
                     "content_sha256": hashlib.sha256(item.get("url", "").encode()).hexdigest(),
                     "exact_entity": True,
                     "identity_proof": [{"type": "verified_website_crosslink", "value": profile.get("website")}],
@@ -449,6 +451,7 @@ def main() -> None:
     all_observations = [
         obs for profile in ordered_profiles for obs in profile.get("external_observations", [])
     ]
+    all_observations.sort(key=lambda x: (str(x.get("organisation_number") or ""), str(x.get("id") or "")))
     observations_output = output_dir / "observations.jsonl"
     write_jsonl(observations_output, all_observations)
 

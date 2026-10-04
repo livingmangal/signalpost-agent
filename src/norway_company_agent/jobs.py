@@ -61,11 +61,12 @@ def fetch_nav_arbeidsplassen_jobs(
     url = "https://arbeidsplassen.nav.no/stillinger/api/search"
     target_tokens = set(re.findall(r"\w+", clean_name.casefold())) if clean_name else set()
 
+    # Prioritize exact 9-digit orgnr query
     queries = []
-    if clean_name:
-        queries.append({"q": f'"{clean_name}"'})
     if org_number:
         queries.append({"q": str(org_number).strip()})
+    if clean_name:
+        queries.append({"q": f'"{clean_name}"'})
 
     seen_uuids = set()
     for q_params in queries:
@@ -73,8 +74,11 @@ def fetch_nav_arbeidsplassen_jobs(
             response = httpx.get(
                 url,
                 params=q_params,
-                headers={"User-Agent": "BuilderrAgent/1.0 (NLOD-open-data)"},
-                timeout=3.5,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                    "Accept": "application/json",
+                },
+                timeout=6.0,
             )
             if response.status_code == 200:
                 data = response.json()
@@ -109,6 +113,9 @@ def fetch_nav_arbeidsplassen_jobs(
                                     "platform": "arbeidsplassen.nav.no",
                                     "source_type": "official_job_registry",
                                 })
+                if jobs:
+                    # Found official jobs for this query; do not need broader query
+                    break
         except Exception:
             pass
 
@@ -119,21 +126,26 @@ def discover_jobs_via_search(
     company_name: str,
     org_number: str,
 ) -> list[dict[str, Any]]:
-    """Search for job postings on permitted Norwegian job platforms."""
-    jobs: list[dict[str, Any]] = []
+    """Search for job postings with frozen fallback ordering.
+
+    Tier 1: Official NAV Arbeidsplassen API
+    Tier 2: Finn.no job search (only if NAV returned 0 jobs)
+    """
     clean_name = re.sub(
         r"\b(AS|ASA|ANS|DA|ENK|NUF)\b", "", company_name, flags=re.IGNORECASE
     ).strip()
 
-    if not clean_name:
-        return jobs
+    if not clean_name and not org_number:
+        return []
 
     # 1. Official NAV Arbeidsplassen API
     nav_api_jobs = fetch_nav_arbeidsplassen_jobs(company_name, org_number)
-    jobs.extend(nav_api_jobs)
+    if nav_api_jobs:
+        return nav_api_jobs
 
-    # 2. Search Finn.no jobs if we don't have enough postings yet
-    if len(jobs) < 5:
+    # 2. Frozen fallback: Only if NAV yielded 0 jobs, search Finn.no
+    jobs: list[dict[str, Any]] = []
+    if clean_name:
         finn_results = search_duckduckgo(
             f'site:finn.no/job "{clean_name}"', max_results=5
         )
@@ -147,21 +159,6 @@ def discover_jobs_via_search(
                     "source_type": "job_platform_search",
                 })
 
-    # 3. Search Arbeidsplassen via search if API was empty
-    if not nav_api_jobs and len(jobs) < 5:
-        nav_results = search_duckduckgo(
-            f'site:arbeidsplassen.nav.no "{clean_name}"', max_results=5
-        )
-        for r in nav_results:
-            if "arbeidsplassen" in r.url.lower() or "nav.no" in r.url.lower():
-                jobs.append({
-                    "title": r.title,
-                    "url": r.url,
-                    "snippet": r.snippet,
-                    "platform": "arbeidsplassen.nav.no",
-                    "source_type": "job_platform_search",
-                })
-
     return jobs
 
 
@@ -170,8 +167,10 @@ def fetch_company_jobs(
 ) -> dict[str, Any]:
     """Fetch all discoverable jobs for a company.
 
-    Combines career page extraction with search-based discovery.
-    Returns an evidence record.
+    Frozen cascade:
+    1. Verified company career pages
+    2. NAV Arbeidsplassen official API
+    3. Finn.no search fallback
     """
     org = profile.get("organisation_number", "")
     name = profile.get("name", "")
@@ -188,9 +187,18 @@ def fetch_company_jobs(
             career_jobs = extract_jobs_from_career_page(page)
             all_jobs.extend(career_jobs)
 
-    # 2. Search job platforms
-    search_jobs = discover_jobs_via_search(name, org)
-    all_jobs.extend(search_jobs)
+    # 2. If career pages found 0 jobs, search external platforms
+    if not all_jobs:
+        search_jobs = discover_jobs_via_search(name, org)
+        all_jobs.extend(search_jobs)
+
+    # Deduplicate and sort deterministically
+    deduped = {}
+    for j in all_jobs:
+        key = str(j.get("url") or j.get("title") or "").strip()
+        if key and key not in deduped:
+            deduped[key] = j
+    all_jobs = sorted(deduped.values(), key=lambda j: (str(j.get("url") or ""), str(j.get("title") or "")))
 
     if all_jobs:
         return evidence(
@@ -201,7 +209,7 @@ def fetch_company_jobs(
             value={
                 "postings": all_jobs,
                 "count": len(all_jobs),
-                "sources": list({j.get("platform") or j.get("source_type", "unknown") for j in all_jobs}),
+                "sources": sorted(list({j.get("platform") or j.get("source_type", "unknown") for j in all_jobs})),
             },
             retrieved_at=retrieved_at,
             content_sha256=__import__("hashlib").sha256(

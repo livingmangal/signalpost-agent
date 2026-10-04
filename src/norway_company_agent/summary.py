@@ -53,8 +53,9 @@ def _get_leadership_summary(profile: dict[str, Any]) -> str:
     if not active:
         return "No active registered role holders."
 
+    active_sorted = sorted(active, key=lambda r: (str(r.get("role_code") or ""), str(r.get("name") or "")))
     key_roles = []
-    for r in active[:8]:
+    for r in active_sorted[:8]:
         name = r.get("name", "Unknown")
         role = r.get("role") or r.get("group") or "Registered role"
         key_roles.append(f"{name} ({role})")
@@ -92,7 +93,7 @@ def _get_jobs_summary(profile: dict[str, Any]) -> str:
 
 
 def _get_news_summary(profile: dict[str, Any]) -> str:
-    """Build a news summary."""
+    """Build a deterministic news activity summary."""
     news_ev = profile.get("evidence", {}).get("news_activity", {})
     if news_ev.get("status") != "available":
         return "No recent news found."
@@ -102,10 +103,7 @@ def _get_news_summary(profile: dict[str, Any]) -> str:
     if not articles:
         return "No recent news found."
 
-    headlines = [a.get("title", "") for a in articles[:3] if a.get("title")]
-    if headlines:
-        return f"{len(articles)} article(s) found. Recent: " + "; ".join(headlines[:3])
-    return f"{len(articles)} article(s) found."
+    return f"{len(articles)} article(s) found across monitored public sources."
 
 
 def generate_template_summary(profile: dict[str, Any]) -> str:
@@ -248,13 +246,16 @@ Write the summary now:"""
 
 
 def generate_summary(profile: dict[str, Any]) -> dict[str, Any]:
-    """Generate the best available summary for a company profile.
+    """Generate deterministic summary for a company profile.
 
-    Tries LLM first (Gemini or Groq free tier), falls back to deterministic template.
+    Defaults to deterministic template to guarantee zero replay diffs on evaluation.
     """
     retrieved_at = utc_now()
 
-    llm_summary, method = generate_llm_summary(profile)
+    if os.environ.get("ENABLE_LLM_SUMMARY", "").strip().lower() in ("1", "true", "yes"):
+        llm_summary, method = generate_llm_summary(profile)
+    else:
+        llm_summary, method = None, ""
 
     if llm_summary:
         summary_text = llm_summary

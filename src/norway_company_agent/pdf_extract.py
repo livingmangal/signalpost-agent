@@ -18,15 +18,17 @@ BRREG_ACCOUNT_PDF = "https://data.brreg.no/regnskapsregisteret/regnskap/aarsregn
 USER_AGENT = "builderr-signalpost/1.0 (+https://builderr.ai)"
 
 
-def download_pdf(url: str, timeout: int = 15) -> bytes | None:
-    """Download a PDF from the given URL."""
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            if resp.status == 200:
-                return resp.read()
-    except Exception:
-        pass
+def download_pdf(url: str, timeout: int = 15, max_retries: int = 2) -> bytes | None:
+    """Download a PDF from the given URL with automatic retries for transient errors."""
+    for attempt in range(max_retries + 1):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                if resp.status == 200:
+                    return resp.read()
+        except Exception:
+            if attempt < max_retries:
+                time.sleep(1.0)
     return None
 
 
@@ -121,6 +123,7 @@ def fetch_annual_report(
         )
 
     text = extract_text_from_pdf(pdf_bytes)
+    stable_content_hash = hashlib.sha256((url + "\n" + (text or "")).encode()).hexdigest()
     if not text:
         return evidence(
             "annual_report_pdf",
@@ -129,7 +132,7 @@ def fetch_annual_report(
             url,
             value={"year": str(year), "text_extracted": False, "note": "PDF downloaded but text extraction failed."},
             retrieved_at=retrieved_at,
-            content_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
+            content_sha256=stable_content_hash,
         )
 
     auditor = extract_auditor(text)
@@ -151,5 +154,5 @@ def fetch_annual_report(
             "text_excerpt": text[:2000],  # First 2000 chars for context
         },
         retrieved_at=retrieved_at,
-        content_sha256=hashlib.sha256(pdf_bytes).hexdigest(),
+        content_sha256=stable_content_hash,
     )

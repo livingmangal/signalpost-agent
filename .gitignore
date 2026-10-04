@@ -14,6 +14,8 @@ signalpost-starter-kit.zip
 out/*
 !out/submission/
 snapshots/
+scratch/
+
 
 # IDE
 .idea/

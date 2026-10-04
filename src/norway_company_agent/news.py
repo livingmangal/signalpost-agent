@@ -139,6 +139,14 @@ def fetch_company_news(
             except Exception:
                 pass
 
+    # Deduplicate and stably sort news articles
+    deduped = {}
+    for n in all_news:
+        key = str(n.get("url") or n.get("title") or "").strip()
+        if key and key not in deduped:
+            deduped[key] = n
+    all_news = sorted(deduped.values(), key=lambda a: (str(a.get("title") or ""), str(a.get("source_name") or "")))
+
     if all_news:
         return evidence(
             "news_activity",
@@ -148,7 +156,7 @@ def fetch_company_news(
             value={
                 "articles": all_news,
                 "count": len(all_news),
-                "sources": list({n.get("source_type", "unknown") for n in all_news}),
+                "sources": sorted(list({n.get("source_type", "unknown") for n in all_news})),
             },
             retrieved_at=retrieved_at,
             content_sha256=hashlib.sha256(

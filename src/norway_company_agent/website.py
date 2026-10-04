@@ -330,7 +330,9 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
             elif page_error:
                 crawl_errors.append({"url": page_url, "error": page_error})
         value["pages"] = pages
-        value["social_links"] = list({(item["platform"], item["url"]): item for item in social}.values())
+        unique_social = {(item["platform"], item["url"]): item for item in social}
+        value["social_links"] = sorted(unique_social.values(), key=lambda item: (str(item.get("platform") or ""), str(item.get("url") or "")))
+        crawl_errors.sort(key=lambda x: str(x.get("url") or ""))
         value["crawl_errors"] = crawl_errors
         return evidence("website", "available", "registry_linked_company_website", final_url, value=value, note="Company-controlled claim layer; not an official registry fact", content_sha256=value["content_sha256"]), {"requests": requests, "bytes": bytes_received, "latencies_ms": page_latencies}
     except urllib.error.HTTPError as exc:

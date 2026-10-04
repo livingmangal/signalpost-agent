@@ -366,5 +366,5 @@ def discover_website_candidates(
                 "signals": signals,
             }
 
-    # Sort by confidence descending
-    return sorted(candidates.values(), key=lambda x: x["confidence"], reverse=True)[:5]
+    # Sort by confidence descending, tie-breaking by URL
+    return sorted(candidates.values(), key=lambda x: (-x["confidence"], str(x.get("url") or "")))[:5]

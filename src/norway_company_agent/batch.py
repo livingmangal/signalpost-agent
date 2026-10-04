@@ -193,7 +193,7 @@ def profile_to_contract_envelope(
             "source_class": ev_record.get("source_class") or "official_registry",
             "retrieved_at": ev_record.get("retrieved_at") or completed_at,
             "content_sha256": ev_record.get("content_sha256") or ("0" * 64),
-            "claim_span": f"{field}: {str(value)[:100]}" if value is not None else ev_record.get("note", f"{field} checked"),
+            "claim_span": f"{field}: {str(value)[:100]}" if value is not None else f"{field} not available",
         }
         evidence_list.append(ev_item)
 
@@ -260,13 +260,14 @@ def profile_to_contract_envelope(
     roles_ev = evidence_dict.get("roles")
     roles_list = _val("roles").get("roles") or []
     roles_url = f"https://data.brreg.no/enhetsregisteret/api/enheter/{org}/roller"
-    ceo_name = next((r.get("name") for r in roles_list if "daglig leder" in str(r.get("role") or "").lower()), None)
+    sorted_roles = sorted(roles_list, key=lambda r: (str(r.get("role_code") or ""), str(r.get("name") or "")))
+    ceo_name = next((r.get("name") for r in sorted_roles if "daglig leder" in str(r.get("role") or "").lower()), None)
     add_claim("ceo", ceo_name, roles_ev, roles_url)
 
-    chair_name = next((r.get("name") for r in roles_list if r.get("role_code") == "LEDE" or ("leder" in str(r.get("role") or "").lower() and "daglig" not in str(r.get("role") or "").lower())), None)
+    chair_name = next((r.get("name") for r in sorted_roles if r.get("role_code") == "LEDE" or ("leder" in str(r.get("role") or "").lower() and "daglig" not in str(r.get("role") or "").lower())), None)
     add_claim("board_chair", chair_name, roles_ev, roles_url)
 
-    board_members = [r.get("name") for r in roles_list if r.get("group_code") == "STYR" and not r.get("inactive") and r.get("name")]
+    board_members = sorted(list({r.get("name") for r in sorted_roles if r.get("group_code") == "STYR" and not r.get("inactive") and r.get("name")}))
     add_claim("board_members", ", ".join(board_members) if board_members else None, roles_ev, roles_url)
 
     # 5. Locations / Subunits
