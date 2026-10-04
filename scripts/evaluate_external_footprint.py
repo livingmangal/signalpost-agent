@@ -95,7 +95,7 @@ def main() -> None:
         "sentiment_audited": len(sentiment_audited),
         "sentiment_accuracy": sentiment_accuracy,
         "coverage": coverage,
-        "platform_counts": dict(Counter(str(item.get("platform")) for item in accepted_all)),
+        "platform_counts": dict(sorted(Counter(str(item.get("platform")) for item in accepted_all).items())),
         "acquisition_modes": dict(acquisition_modes),
         "minimum_audit": args.minimum_audit,
         "audit_size_gate": audit_size_gate,

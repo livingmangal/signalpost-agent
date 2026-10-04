@@ -140,6 +140,7 @@ def fetch_company_social(
             candidate["verified"] = True
 
     all_profiles = verified_links + [c for c in candidate_links if c["url"].lower().rstrip("/") not in verified_urls]
+    all_profiles.sort(key=lambda p: (str(p.get("platform") or ""), str(p.get("url") or "")))
 
     if all_profiles:
         return evidence(

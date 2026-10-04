@@ -63,7 +63,7 @@ def extract_page_event(
         structured = extruct.extract(page_html, base_url=final_url, syntaxes=["json-ld", "microdata", "opengraph"])
         event["structured_organisations"] = _jsonld_organisations(structured)
         combined_social = event["social_links"] + structured_social_links(event["structured_organisations"])
-        event["social_links"] = list({(item["platform"], item["url"]): item for item in combined_social}.values())
+        event["social_links"] = sorted({(item["platform"], item["url"]): item for item in combined_social}.values(), key=lambda item: (item.get("platform", ""), item.get("url", "")))
         event["registered_domain"] = _registered_domain(final_url)
     return event
 
@@ -153,7 +153,7 @@ def merge_profile_events(profile: dict[str, Any], events: list[dict[str, Any]]) 
         "description": homepage.get("description") or "",
         "main_text_excerpt": homepage.get("main_text_excerpt") or "",
         "identity_text_excerpt": homepage.get("identity_text_excerpt") or "",
-        "social_links": list(social.values()),
+        "social_links": sorted(social.values(), key=lambda item: (item.get("platform", ""), item.get("url", ""))),
         "structured_organisations": homepage.get("structured_organisations") or [],
         "content_sha256": homepage.get("content_sha256"),
         "extraction_state": homepage.get("extraction_state"),

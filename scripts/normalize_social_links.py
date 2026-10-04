@@ -26,7 +26,7 @@ def main() -> None:
         links.extend(structured_social_links(value.get("structured_organisations") or []))
         before += len(links)
         normalized = [item for item in (normalize_social_url(link.get("url", "")) for link in links) if item]
-        value["discovered_social_links"] = list({(item["platform"], item["url"]): item for item in normalized}.values())
+        value["discovered_social_links"] = sorted({(item["platform"], item["url"]): item for item in normalized}.values(), key=lambda item: (item.get("platform", ""), item.get("url", "")))
         publishable = value.get("identity_assessment", {}).get("publishable", True)
         assessments = [assess_social_identity(row, link) for link in value["discovered_social_links"]]
         value["social_link_assessments"] = assessments

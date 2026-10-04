@@ -178,7 +178,7 @@ def aggregate_footprint(
             "items": len(sentiment_items),
             "independent_sources": len(independent_sentiment_hosts),
             "independent_reviewers": len(independent_sentiment_reviewers),
-            "label_counts": dict(Counter(item["sentiment_label"] for item in sentiment_items)),
+            "label_counts": dict(sorted(Counter(item["sentiment_label"] for item in sentiment_items).items())),
             "warning": "Dated contextual signal, not a timeless fact about the company.",
         },
     }

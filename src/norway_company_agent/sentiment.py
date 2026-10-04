@@ -54,7 +54,7 @@ def aggregate_company_sentiment(items: list[dict[str, Any]]) -> dict[str, Any]:
         "label": label,
         "accepted_items": len(accepted),
         "rejected_items": rejected,
-        "label_counts": dict(counts),
+        "label_counts": dict(sorted(counts.items())),
         "independent_source_ids": sorted(independent_sources),
         "source_urls": sorted({item["source_url"] for item in accepted}),
         "warning": "Contextual dated signal, not a timeless fact about the company.",

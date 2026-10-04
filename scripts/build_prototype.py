@@ -148,7 +148,7 @@ def compact(row: dict, external_observations: list[dict] | None = None) -> dict:
     linkedin_profile = linkedin_profiles[-1] if linkedin_profiles else None
     linkedin_headcount = linkedin_workforce[-1] if linkedin_workforce else None
     external = {
-        "handles": list(verified_handles.values()),
+        "handles": sorted(verified_handles.values(), key=lambda h: (str(h.get("platform") or ""), str(h.get("url") or ""))),
         "linkedin": {
             "available": bool(linkedin_profile),
             "profile": ({**(linkedin_profile.get("metrics") or {}), **observation_meta(linkedin_profile)} if linkedin_profile else {}),
