@@ -54,15 +54,25 @@ def fetch_google_news_rss(
                 link = entry.get("link", "")
                 if link and link not in seen_urls:
                     seen_urls.add(link)
-                    published = entry.get("published", "")
+                    raw_title = entry.get("title", "").strip()
+                    clean_title = raw_title
+                    while re.search(r"\s*-\s*[^-]+$", clean_title):
+                        clean_title = re.sub(r"\s*-\s*[^-]+$", "", clean_title).strip()
+                    if not clean_title:
+                        clean_title = raw_title
+
+                    raw_source = entry.get("source", {}).get("title", "") if hasattr(entry.get("source", {}), "get") else str(entry.get("source", ""))
+                    clean_source = str(raw_source or "").strip().lower()
+
+                    clean_summary = re.sub(r"<[^>]+>", " ", entry.get("summary", "") or "")
+                    clean_summary = re.sub(r"\s+", " ", clean_summary).strip()[:300]
+
                     articles.append({
-                        "title": entry.get("title", ""),
+                        "title": clean_title,
                         "url": link,
                         "published": published,
-                        "source_name": entry.get("source", {}).get("title", "")
-                                       if hasattr(entry.get("source", {}), "get")
-                                       else str(entry.get("source", "")),
-                        "summary": entry.get("summary", "")[:300],
+                        "source_name": clean_source,
+                        "summary": clean_summary,
                     })
                     if len(articles) >= max_results:
                         break
@@ -145,7 +155,7 @@ def fetch_company_news(
         key = str(n.get("url") or n.get("title") or "").strip()
         if key and key not in deduped:
             deduped[key] = n
-    all_news = sorted(deduped.values(), key=lambda a: (str(a.get("title") or ""), str(a.get("source_name") or "")))
+    all_news = sorted(deduped.values(), key=lambda a: (str(a.get("title") or ""), str(a.get("url") or "")))
 
     if all_news:
         return evidence(
@@ -160,7 +170,7 @@ def fetch_company_news(
             },
             retrieved_at=retrieved_at,
             content_sha256=hashlib.sha256(
-                json.dumps(all_news, sort_keys=True).encode()
+                json.dumps([{"title": a.get("title"), "url": a.get("url")} for a in all_news], sort_keys=True).encode("utf-8")
             ).hexdigest(),
         )
     else:

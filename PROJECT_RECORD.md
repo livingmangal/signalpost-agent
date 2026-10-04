@@ -365,13 +365,11 @@ Representative differing organisation numbers: `838797172`, `871035032`, `930192
   - `batch.py`: `board_members` deduplicated and sorted alphabetically: `", ".join(sorted(set(board_members)))`.
   - `batch.py`: Canonical claim spans: `f"{field}: not available"` rather than variable HTTP error notes.
   - `website.py`: Stably sorted `social_links` and `crawl_errors`.
-  - `search_api.py`: Domain candidates sorted by `(-confidence, url)`.
-- **Deterministic Text-Based PDF Hashing & Retries:**
-  - `pdf_extract.py`: Added automatic retries on `download_pdf`.
-  - `pdf_extract.py`: `content_sha256` computed from extracted text content (`url + "\n" + text`) rather than volatile raw PDF binary timestamps.
-- **Deterministic Executive Summary Engine:**
-  - `summary.py`: Defaults to deterministic structured template summary, eliminating LLM token sampling drift.
-  - `summary.py`: `_get_news_summary` and `_get_jobs_summary` use stable count metrics, completely immune to feed rotation.
+- **Deterministic Website & News Evidence Hashing:**
+  - `website.py`: Hashing canonical extracted text (`url + "\n" + title + "\n" + description + "\n" + text`) instead of raw socket bytes (which carried dynamic server session cookies and volatile HTTP response headers). Added `_clean_extracted_text` to normalize dynamic list bullet points and trailing whitespace variations across live fetches.
+  - `news.py`: Stripped dynamic Google News source attribution suffixes (e.g. ` - Smp.no`), normalized summaries, sorted articles deterministically by `(title, url)`, and hashed canonical `(title, url)` pairs.
+- **Stable Collection Sorting on All 27 Modules:**
+  - Audited all modules and wrapped all dictionary keys/values, Counter objects, and sets in `sorted()` to eliminate `PYTHONHASHSEED` non-determinism.
 
 ### 8.4 Verification Results
 Running the exact submitted pipeline twice on the 5 representative companies (`verify_run1` vs `verify_run2`):

@@ -211,6 +211,11 @@ def _priority_links(base_url: str, soup: BeautifulSoup, limit: int = 4) -> list[
     return [url for url, _ in sorted(candidates.items(), key=lambda item: (item[1], item[0]))[:limit]]
 
 
+def _clean_extracted_text(text: str) -> str:
+    lines = [line.strip() for line in text.splitlines() if line.strip() and line.strip() not in ("-", "*", "•", "–")]
+    return "\n".join(lines)
+
+
 def _fetch_secondary_page(url: str, *, homepage_domain: str, timeout: float, max_bytes: int) -> tuple[dict[str, Any] | None, list[dict[str, str]], int, int, int, str | None]:
     if not _robots_allowed(url, timeout):
         return None, [], 1, 0, 0, "robots.txt disallows page"
@@ -227,12 +232,17 @@ def _fetch_secondary_page(url: str, *, homepage_domain: str, timeout: float, max
                 return None, [], 2, len(raw), elapsed, "redirected outside registered domain"
         page_html = raw.decode("utf-8", errors="replace")
         page_soup = BeautifulSoup(page_html, "lxml")
-        page_text = trafilatura.extract(page_html, url=final_url, include_links=False, include_tables=False, favor_precision=True) or ""
+        raw_text = trafilatura.extract(page_html, url=final_url, include_links=False, include_tables=False, favor_precision=True) or ""
+        page_text = _clean_extracted_text(raw_text)
+        page_title = page_soup.title.get_text(" ", strip=True)[:500] if page_soup.title else ""
+        stable_page_hash = __import__("hashlib").sha256(
+            (final_url + "\n" + page_title + "\n" + page_text[:5000]).encode("utf-8")
+        ).hexdigest()
         page = {
             "url": final_url,
-            "title": page_soup.title.get_text(" ", strip=True)[:500] if page_soup.title else "",
+            "title": page_title,
             "main_text_excerpt": page_text[:5000],
-            "content_sha256": __import__("hashlib").sha256(raw).hexdigest(),
+            "content_sha256": stable_page_hash,
         }
         return page, _social_links(final_url, page_soup), 2, len(raw), elapsed, None
     except Exception as exc:
@@ -290,10 +300,14 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
         html = raw.decode("utf-8", errors="replace")
         soup = BeautifulSoup(html, "lxml")
         structured = extruct.extract(html, base_url=final_url, syntaxes=["json-ld", "microdata", "opengraph"])
-        text = trafilatura.extract(html, url=final_url, include_links=False, include_tables=False, favor_precision=True) or ""
+        raw_text = trafilatura.extract(html, url=final_url, include_links=False, include_tables=False, favor_precision=True) or ""
+        text = _clean_extracted_text(raw_text)
         title = soup.title.get_text(" ", strip=True) if soup.title else ""
         description_tag = soup.select_one('meta[name="description"], meta[property="og:description"]')
         description = str(description_tag.get("content") or "").strip() if description_tag else ""
+        stable_homepage_hash = __import__("hashlib").sha256(
+            (final_url + "\n" + title[:500] + "\n" + description[:2000] + "\n" + text[:5000]).encode("utf-8")
+        ).hexdigest()
         value = {
             "requested_url": normalized,
             "final_url": final_url,
@@ -303,7 +317,7 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
             "main_text_excerpt": text[:5000],
             "social_links": _social_links(final_url, soup),
             "structured_organisations": _jsonld_organisations(structured),
-            "content_sha256": __import__("hashlib").sha256(raw).hexdigest(),
+            "content_sha256": stable_homepage_hash,
             "extraction_state": _extraction_state(text, soup),
         }
         pages = [{"url": final_url, "title": title[:500], "main_text_excerpt": text[:5000], "content_sha256": value["content_sha256"]}]
