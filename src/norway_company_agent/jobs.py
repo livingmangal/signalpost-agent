@@ -70,54 +70,62 @@ def fetch_nav_arbeidsplassen_jobs(
 
     seen_uuids = set()
     for q_params in queries:
-        try:
-            response = httpx.get(
-                url,
-                params=q_params,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-                    "Accept": "application/json",
-                },
-                timeout=6.0,
-            )
-            if response.status_code == 200:
-                data = response.json()
-                hits = data.get("hits", {}).get("hits", [])
-                for hit in hits[:10]:
-                    source = hit.get("_source", {})
-                    employer = source.get("employer", {})
-                    emp_name = str(employer.get("name", "")).casefold()
-                    emp_org = str(employer.get("orgnr", "")).strip()
-                    emp_tokens = set(re.findall(r"\w+", emp_name))
+        for attempt in range(2):
+            try:
+                response = httpx.get(
+                    url,
+                    params=q_params,
+                    headers={
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                        "Accept": "application/json",
+                    },
+                    timeout=10.0,
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    hits = data.get("hits", {}).get("hits", [])
+                    for hit in hits[:10]:
+                        source = hit.get("_source", {})
+                        employer = source.get("employer", {})
+                        emp_name = str(employer.get("name", "")).casefold()
+                        emp_org = str(employer.get("orgnr", "")).strip()
+                        emp_tokens = set(re.findall(r"\w+", emp_name))
 
-                    # Check identity gate: exact org match OR employer name token overlap
-                    is_match = False
-                    if org_number and emp_org == str(org_number).strip():
-                        is_match = True
-                    elif target_tokens and (target_tokens.issubset(emp_tokens) or len(target_tokens & emp_tokens) >= max(1, len(target_tokens) - 1)):
-                        is_match = True
+                        # Check identity gate: exact org match OR employer name token overlap
+                        is_match = False
+                        if org_number and emp_org == str(org_number).strip():
+                            is_match = True
+                        elif target_tokens and (target_tokens.issubset(emp_tokens) or len(target_tokens & emp_tokens) >= max(1, len(target_tokens) - 1)):
+                            is_match = True
 
-                    if is_match:
-                        uuid = source.get("uuid")
-                        if uuid and uuid not in seen_uuids:
-                            seen_uuids.add(uuid)
-                            title = source.get("title")
-                            locations = source.get("locationList") or []
-                            loc_str = locations[0].get("city") if locations else None
-                            if title:
-                                jobs.append({
-                                    "title": title,
-                                    "url": f"https://arbeidsplassen.nav.no/stillinger/stilling/{uuid}",
-                                    "location": loc_str,
-                                    "published": source.get("published"),
-                                    "platform": "arbeidsplassen.nav.no",
-                                    "source_type": "official_job_registry",
-                                })
-                if jobs:
-                    # Found official jobs for this query; do not need broader query
+                        if is_match:
+                            uuid = source.get("uuid")
+                            if uuid and uuid not in seen_uuids:
+                                seen_uuids.add(uuid)
+                                title = source.get("title")
+                                locations = source.get("locationList") or []
+                                loc_str = locations[0].get("city") if locations else None
+                                if title:
+                                    jobs.append({
+                                        "title": title,
+                                        "url": f"https://arbeidsplassen.nav.no/stillinger/stilling/{uuid}",
+                                        "location": loc_str,
+                                        "published": source.get("published"),
+                                        "platform": "arbeidsplassen.nav.no",
+                                        "source_type": "official_job_registry",
+                                    })
+                    if jobs:
+                        break
                     break
-        except Exception:
-            pass
+                elif response.status_code == 429 and attempt == 0:
+                    import time
+                    time.sleep(1.0)
+            except Exception:
+                if attempt == 0:
+                    import time
+                    time.sleep(1.0)
+        if jobs:
+            break
 
     return jobs
 
@@ -178,19 +186,37 @@ def fetch_company_jobs(
 
     all_jobs: list[dict[str, Any]] = []
 
+    career_page_url: str | None = None
+
     # 1. Extract from career pages if website was crawled
     website_ev = profile.get("evidence", {}).get("website", {})
     website_value = website_ev.get("value") or {}
     for page in website_value.get("pages", []):
         page_url = (page.get("url") or "").lower()
-        if any(kw in page_url for kw in ("career", "job", "stilling", "ledig")):
+        if any(kw in page_url for kw in ("career", "job", "stilling", "ledig", "karriere")):
+            if not career_page_url:
+                career_page_url = page.get("url")
             career_jobs = extract_jobs_from_career_page(page)
-            all_jobs.extend(career_jobs)
+            if career_jobs:
+                all_jobs.extend(career_jobs)
+            else:
+                all_jobs.append({
+                    "title": f"Karriereside ({name or 'Bedrift'})",
+                    "url": page.get("url", ""),
+                    "platform": "company_career_page",
+                    "source_type": "company_career_page",
+                })
 
-    # 2. If career pages found 0 jobs, search external platforms
+    # 2. Official NAV Arbeidsplassen API lookup
+    nav_jobs = fetch_nav_arbeidsplassen_jobs(name, org)
+    all_jobs.extend(nav_jobs)
+
+    # 3. Fallback search on Finn.no only if 0 jobs found so far
     if not all_jobs:
-        search_jobs = discover_jobs_via_search(name, org)
-        all_jobs.extend(search_jobs)
+        clean_name = re.sub(r"\b(AS|ASA|ANS|DA|ENK|NUF)\b", "", name, flags=re.IGNORECASE).strip()
+        if clean_name:
+            search_jobs = discover_jobs_via_search(name, org)
+            all_jobs.extend(search_jobs)
 
     # Deduplicate and sort deterministically
     deduped = {}
@@ -199,6 +225,8 @@ def fetch_company_jobs(
         if key and key not in deduped:
             deduped[key] = j
     all_jobs = sorted(deduped.values(), key=lambda j: (str(j.get("url") or ""), str(j.get("title") or "")))
+
+    primary_hiring_url = career_page_url or (all_jobs[0].get("url") if all_jobs else None)
 
     if all_jobs:
         return evidence(
@@ -209,6 +237,8 @@ def fetch_company_jobs(
             value={
                 "postings": all_jobs,
                 "count": len(all_jobs),
+                "career_page_url": career_page_url,
+                "primary_hiring_url": primary_hiring_url,
                 "sources": sorted(list({j.get("platform") or j.get("source_type", "unknown") for j in all_jobs})),
             },
             retrieved_at=retrieved_at,

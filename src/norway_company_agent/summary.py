@@ -93,17 +93,120 @@ def _get_jobs_summary(profile: dict[str, Any]) -> str:
 
 
 def _get_news_summary(profile: dict[str, Any]) -> str:
-    """Build a deterministic news activity summary."""
+    """Build a deterministic news activity summary with dated citations."""
     news_ev = profile.get("evidence", {}).get("news_activity", {})
     if news_ev.get("status") != "available":
-        return "No recent news found."
+        return "No recent news found across monitored public sources."
 
     value = news_ev.get("value") or {}
     articles = value.get("articles") or []
     if not articles:
-        return "No recent news found."
+        return "No recent news found across monitored public sources."
 
-    return f"{len(articles)} article(s) found across monitored public sources."
+    lines = [f"{len(articles)} article(s) found across monitored public sources:"]
+    for art in articles[:4]:
+        title = art.get("title", "Untitled")
+        pub = f" ({art['published'][:10]})" if art.get("published") else ""
+        src = f" — {art.get('source_name')}" if art.get("source_name") else ""
+        url = art.get("url", "")
+        if url:
+            lines.append(f"- [{title}]({url}){pub}{src}")
+        else:
+            lines.append(f"- {title}{pub}{src}")
+    return "\n".join(lines)
+
+
+def _get_growth_signals_summary(profile: dict[str, Any]) -> str:
+    """Build strictly evidence-supported growth signals."""
+    signals = []
+
+    # 1. Financial trajectory (filed accounting records)
+    financial = profile.get("evidence", {}).get("financials", {})
+    records = (financial.get("value") or {}).get("records") or []
+    if len(records) >= 2:
+        sorted_recs = sorted(
+            [r for r in records if (r.get("period") or {}).get("tilDato")],
+            key=lambda r: str((r.get("period") or {}).get("tilDato")),
+        )
+        if len(sorted_recs) >= 2:
+            prev, curr = sorted_recs[-2], sorted_recs[-1]
+            c_rev, p_rev = curr.get("revenue"), prev.get("revenue")
+            c_per = (curr.get("period") or {}).get("tilDato", "")[:4]
+            p_per = (prev.get("period") or {}).get("tilDato", "")[:4]
+            currency = curr.get("currency") or "NOK"
+            if isinstance(c_rev, (int, float)) and isinstance(p_rev, (int, float)) and p_rev > 0:
+                growth_pct = ((c_rev - p_rev) / p_rev) * 100
+                dir_str = "increased" if growth_pct > 0 else "decreased"
+                signals.append(
+                    f"Revenue trajectory: {c_per} revenue of {c_rev:,.0f} {currency} {dir_str} by {abs(growth_pct):.1f}% compared to {p_per} ({p_rev:,.0f} {currency}), based on official annual accounts filed with Regnskapsregisteret."
+                )
+            c_op, p_op = curr.get("operating_result"), prev.get("operating_result")
+            if isinstance(c_op, (int, float)) and isinstance(p_op, (int, float)):
+                signals.append(
+                    f"Operating performance: Operating result changed from {p_op:,.0f} {currency} ({p_per}) to {c_op:,.0f} {currency} ({c_per}) in official filings."
+                )
+
+    # 2. Hiring & Headcount
+    jobs_ev = profile.get("evidence", {}).get("jobs", {})
+    jobs_val = (jobs_ev.get("value") or {})
+    postings = jobs_val.get("postings") or []
+    emp = profile.get("employees")
+    if postings:
+        hiring_sources = ", ".join(jobs_val.get("sources") or ["official job board"])
+        signals.append(
+            f"Active hiring signal: {len(postings)} active vacancy posting(s) verified via {hiring_sources}."
+        )
+    if emp is not None and emp > 0:
+        signals.append(
+            f"Registered workforce: {emp} registered employee(s) reported in official register."
+        )
+
+    # 3. Operational footprint / Subunits
+    loc_ev = profile.get("evidence", {}).get("locations", {})
+    loc_list = (loc_ev.get("value") or {}).get("locations") or []
+    if len(loc_list) > 1:
+        signals.append(
+            f"Geographic presence: {len(loc_list)} registered operational subunits across Norway in Enhetsregisteret."
+        )
+
+    if signals:
+        return "\n".join(f"- {s}" for s in signals)
+    return "No verified growth or expansion signals detected in currently filed public data."
+
+
+def _get_inference_and_boundaries_summary(profile: dict[str, Any]) -> str:
+    """Explicitly separate analytical inferences from empirical facts and state boundaries."""
+    inferences = []
+    emp = profile.get("employees")
+    fin_records = ((profile.get("evidence", {}).get("financials", {}) or {}).get("value") or {}).get("records") or []
+
+    # Inferred operational posture
+    if emp is not None and emp > 50:
+        inferences.append("Operational posture: The company operates as an established commercial organization with substantial organizational footprint.")
+    elif emp is not None and emp == 0:
+        inferences.append("Operational posture: The entity records 0 registered employees, indicating a holding, investment, asset management, or subcontracted operating model.")
+
+    if fin_records:
+        latest = fin_records[0]
+        eq = latest.get("equity")
+        assets = latest.get("assets")
+        if isinstance(eq, (int, float)) and isinstance(assets, (int, float)) and assets > 0:
+            equity_ratio = (eq / assets) * 100
+            if equity_ratio >= 40:
+                inferences.append(f"Balance sheet solidity: Inferred robust solvency with an estimated equity ratio of {equity_ratio:.1f}%.")
+
+    # Explicit boundaries (what is NOT measured and NOT inferred)
+    boundaries = [
+        "Customer sentiment, net promoter scores, and direct satisfaction are unmeasured and not inferred from registry data.",
+        "Private commercial margins, customer acquisition cost, and real-time transaction volume are unmeasured.",
+        "External claims are bounded strictly to verified registry filings and public citations; no unsubstantiated market assertions are made.",
+    ]
+
+    parts = []
+    if inferences:
+        parts.append("**Analytical Inferences:**\n" + "\n".join(f"- {inf}" for inf in inferences))
+    parts.append("**Operational Boundaries & Unmeasured Dimensions:**\n" + "\n".join(f"- {bnd}" for bnd in boundaries))
+    return "\n\n".join(parts)
 
 
 def generate_template_summary(profile: dict[str, Any]) -> str:
@@ -135,6 +238,9 @@ def generate_template_summary(profile: dict[str, Any]) -> str:
     # Financials
     sections.append(f"\n## Financial Summary\n{_get_financial_summary(profile)}")
 
+    # Supported Growth Signals
+    sections.append(f"\n## Supported Growth Signals\n{_get_growth_signals_summary(profile)}")
+
     # Leadership
     sections.append(f"\n## Leadership\n{_get_leadership_summary(profile)}")
 
@@ -155,6 +261,9 @@ def generate_template_summary(profile: dict[str, Any]) -> str:
     if verified:
         links = [f"[{p.get('platform', '?')}]({p.get('url', '')})" for p in verified[:5]]
         sections.append(f"\n## Social Profiles\n" + ", ".join(links))
+
+    # Analytical Inference and Boundaries
+    sections.append(f"\n## Analytical Inference and Boundaries\n{_get_inference_and_boundaries_summary(profile)}")
 
     # Unknown info
     unknowns = []

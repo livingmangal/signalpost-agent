@@ -325,14 +325,26 @@ def discover_website_candidates(
         except Exception:
             continue
 
-        # Skip social media, search engines, government registries, encyclopedias
+        # Skip social media, search engines, government registries, directories, databases
         skip_domains = {
             "linkedin.com", "facebook.com", "instagram.com", "twitter.com",
-            "x.com", "youtube.com", "brreg.no", "proff.no", "purehelp.no",
-            "1881.no", "gulesider.no", "finn.no", "google.com",
-            "wikipedia.org", "bing.com", "duckduckgo.com", "tavily.com",
+            "x.com", "youtube.com", "tiktok.com", "brreg.no", "proff.no", "purehelp.no",
+            "1881.no", "gulesider.no", "1850.no", "finn.no", "google.com",
+            "wikipedia.org", "wikidata.org", "bing.com", "duckduckgo.com", "tavily.com",
+            "firmview.no", "firmabasen.no", "firmadatabasen.no", "foretaksinfo.no",
+            "norgelei.no", "lei.report", "bloomberg.com", "northdata.com",
+            "vexter.no", "vexter.ai", "listings.no", "haandverkerportalen.no", "nabonytt.no",
+            "fagfolkguiden.no", "proffi.no", "byndle.no", "utdanning.no", "tracxn.com",
+            "rocketreach.co", "zoominfo.com", "dnb.com", "crunchbase.com", "orgi.no",
+            "businessinsider.com", "forbes.com", "reuters.com", "allabolag.se",
+            "largestcompanies.com", "yellowpages.com", "infobel.com", "regnskapstall.no",
+            "proffforvalt.no", "ratsit.se", "eniro.se", "kvasir.no", "opencorporates.com",
         }
-        if domain in skip_domains:
+        if any(domain == skip or domain.endswith("." + skip) for skip in skip_domains):
+            continue
+        # Also skip directory lookup paths
+        parsed_path = parsed.path.lower()
+        if re.search(r"^/(?:company|selskap|bedrift|foretak|bedrifter|b|detaljert-informasjon|profil|companies|leis|lei)/", parsed_path):
             continue
 
         key = r.url.rstrip("/").lower()

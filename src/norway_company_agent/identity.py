@@ -14,6 +14,7 @@ LEGAL_AND_GENERIC = {
 
 def _tokens(value: Any) -> list[str]:
     text = str(value or "").translate(str.maketrans({"ø": "o", "Ø": "O", "å": "a", "Å": "A", "æ": "ae", "Æ": "AE"}))
+    text = re.sub(r"\bnorsk avdeling av utenlandsk foretak\b", "", text, flags=re.IGNORECASE)
     text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().casefold()
     return [token for token in re.findall(r"[a-z0-9]+", text) if token not in LEGAL_AND_GENERIC and len(token) > 1]
 
@@ -70,21 +71,49 @@ def assess_website_identity(profile: dict[str, Any]) -> dict[str, Any]:
     exact_homepage_name = bool(core and any(set(core).issubset(tokens) for tokens in homepage_token_sets))
     substantive_homepage = len(str(value.get("main_text_excerpt") or "").strip()) >= 100
     is_business_sports_club = bool(re.search(r"(?:^|\s)B\.?\s*I\.?\s*L\.?(?:\s|$)", str(profile.get("name") or ""), re.I))
+    is_registry_website = bool(profile.get("website"))
+
+    parsed_candidate_url = urllib.parse.urlparse(value.get("final_url") or website.get("source_url") or "")
+    candidate_path = parsed_candidate_url.path or ""
+    is_directory_or_aggregator = any(
+        d in hostname for d in (
+            "brreg.no", "proff.no", "purehelp.no", "1881.no", "gulesider.no", "1850.no",
+            "firmview.no", "firmabasen.no", "firmadatabasen.no", "foretaksinfo.no",
+            "norgelei.no", "lei.report", "bloomberg.com", "northdata.com",
+            "vexter.no", "vexter.ai", "listings.no", "haandverkerportalen.no", "nabonytt.no",
+            "fagfolkguiden.no", "proffi.no", "byndle.no", "utdanning.no", "tracxn.com",
+            "rocketreach.co", "zoominfo.com", "dnb.com", "crunchbase.com", "orgi.no",
+            "businessinsider.com", "forbes.com", "reuters.com", "wikipedia.org", "wikidata.org",
+            "allabolag.se", "largestcompanies.com", "yellowpages.com", "infobel.com", "regnskapstall.no",
+        )
+    ) or bool(re.search(r"^/(?:company|selskap|bedrift|foretak|bedrifter|b|detaljert-informasjon|profil|companies|leis|lei)/", candidate_path))
+
+    homepage_candidate_tokens = set(_tokens(homepage_candidate_text))
+    distinctive_tokens_in_host = [t for t in core if len(t) >= 3 and t in hostname.lower()]
     if any(marker in normalized_raw for marker in parked_markers):
         score = 0.1
         reasons.append("captured page is a parked, for-sale, or generic hosting placeholder")
+    elif not is_registry_website and is_directory_or_aggregator:
+        score = 0.1
+        reasons.append("candidate URL is a third-party directory, aggregator, or business database")
     elif is_business_sports_club and "bedriftsidrett" not in normalized_candidate_text and "b i l" not in normalized_candidate_text:
         score = 0.3
         reasons.append("business sports-club entity points to the operating company's site without club evidence")
-    elif org_digits and org_digits in compact_homepage_candidate:
+    elif org_digits and org_digits in compact_homepage_candidate and not is_directory_or_aggregator:
         score = 1.0
         reasons.append("exact organisation number appears in homepage identity evidence")
+    elif is_registry_website and not is_directory_or_aggregator and (distinctive_tokens_in_host or exact_homepage_name):
+        score = 0.95
+        reasons.append("registry-registered domain matches distinctive company name tokens")
     elif len(core) >= 2 and exact_homepage_name:
         score = 0.95
         reasons.append("all normalized legal-name tokens appear together in homepage identity evidence")
-    elif len(core) == 1 and exact_homepage_name and substantive_homepage:
+    elif len(core) >= 2 and is_registry_website and set(core).issubset(homepage_candidate_tokens):
         score = 0.95
-        reasons.append("single distinctive legal-name token appears in homepage identity evidence with substantive content")
+        reasons.append("all normalized legal-name tokens appear on registry-linked homepage")
+    elif len(core) == 1 and exact_homepage_name and (substantive_homepage or is_registry_website):
+        score = 0.95
+        reasons.append("single distinctive legal-name token appears in homepage identity evidence")
     elif ratio >= 0.75 and len(overlap) >= 2:
         score = 0.85
         reasons.append("most legal-name tokens appear, but exact identity is incomplete")
@@ -150,7 +179,7 @@ def apply_website_identity_gate(profile: dict[str, Any], website: dict[str, Any]
     value["social_links"] = [
         {"platform": item["platform"], "url": item["url"]}
         for item in social_assessments
-        if assessment["publishable"] and item["publishable"]
+        if (assessment["publishable"] or item.get("identity_score", 0) >= 0.95) and item["publishable"]
     ]
     website["value"] = value
     return {

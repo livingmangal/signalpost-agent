@@ -239,10 +239,32 @@ def profile_to_contract_envelope(
             emp_count = None
     add_claim("employee_count", emp_count, reg_ev, reg_url)
 
-    # 2. Website claim
+    # 2. Website claims (both official_website and company_website)
+    from .identity import assess_website_identity
     web_ev = evidence_dict.get("website")
     web_val = (web_ev or {}).get("value") or {}
-    add_claim("official_website", web_val.get("canonical_domain") or profile.get("website"), web_ev, str(profile.get("website") or ""))
+    assessment = assess_website_identity(profile) if web_ev else {"publishable": False}
+    web_publishable = assessment.get("publishable", False)
+    website_url = web_val.get("canonical_domain") or web_val.get("final_url") or profile.get("website")
+    if (web_ev or {}).get("status") == "available" and web_publishable and website_url:
+        target_web_ev = web_ev
+        target_web_url = web_val.get("final_url") or website_url
+    elif profile.get("website"):
+        target_web_ev = reg_ev
+        target_web_url = str(profile.get("website"))
+        website_url = target_web_url
+    else:
+        target_web_ev = web_ev
+        target_web_url = ""
+        website_url = None
+
+    if website_url and not str(website_url).startswith(("http://", "https://")):
+        website_url = f"https://{website_url}"
+    if target_web_url and not str(target_web_url).startswith(("http://", "https://")):
+        target_web_url = f"https://{target_web_url}"
+
+    add_claim("official_website", website_url, target_web_ev, target_web_url)
+    add_claim("company_website", website_url, target_web_ev, target_web_url)
 
     # 3. Financial claims
     fin_ev = evidence_dict.get("financials")
@@ -276,12 +298,56 @@ def profile_to_contract_envelope(
     subunits_count = len(loc_list) if loc_list else (_val("locations").get("count") or 0)
     add_claim("subunits_count", subunits_count, loc_ev, f"https://data.brreg.no/enhetsregisteret/api/underenheter?overordnetEnhet={org}")
 
-    # 6. Footprint
-    jobs_count = _val("jobs").get("count", 0)
-    add_claim("jobs", jobs_count if jobs_count > 0 else None, evidence_dict.get("jobs"))
+    # 6. Social profiles
+    social_ev = evidence_dict.get("social_profiles")
+    social_val = (social_ev or {}).get("value") or {}
+    social_profiles = social_val.get("profiles") or []
+    if not social_profiles:
+        social_profiles = web_val.get("social_links") or []
 
-    news_count = _val("news_activity").get("count", 0)
-    add_claim("news_activity", news_count if news_count > 0 else None, evidence_dict.get("news_activity"))
+    linkedin_prof = next((p.get("url") for p in social_profiles if "linkedin.com" in str(p.get("url", "")).lower()), None)
+    primary_social = linkedin_prof or (social_profiles[0].get("url") if social_profiles else None)
+
+    add_claim("social_profile", primary_social, social_ev or web_ev, primary_social or "")
+    add_claim("linkedin_profile", linkedin_prof, social_ev or web_ev, linkedin_prof or "")
+
+    # 7. Hiring / Job discovery
+    jobs_ev = evidence_dict.get("jobs")
+    jobs_val = (jobs_ev or {}).get("value") or {}
+    jobs_count = jobs_val.get("count", 0)
+    add_claim("jobs", jobs_count if jobs_count > 0 else None, jobs_ev)
+
+    primary_hiring = jobs_val.get("primary_hiring_url") or jobs_val.get("career_page_url")
+    if not primary_hiring and jobs_val.get("postings"):
+        primary_hiring = jobs_val["postings"][0].get("url")
+    add_claim("hiring_signal", primary_hiring, jobs_ev, primary_hiring or "")
+
+    # 8. News & Dated news
+    news_ev = evidence_dict.get("news_activity")
+    news_val = (news_ev or {}).get("value") or {}
+    news_count = news_val.get("count", 0)
+    add_claim("news_activity", news_count if news_count > 0 else None, news_ev)
+
+    articles = news_val.get("articles") or []
+    dated_articles = [a for a in articles if a.get("published")]
+    dated_articles.sort(key=lambda a: str(a.get("published") or ""), reverse=True)
+    latest_dated = dated_articles[0] if dated_articles else (articles[0] if articles else None)
+
+    if latest_dated:
+        pub_str = str(latest_dated.get("published") or "").strip()
+        title_str = str(latest_dated.get("title") or "").strip()
+        if title_str and pub_str:
+            dated_news_val = f"{title_str} ({pub_str})"
+        elif title_str:
+            dated_news_val = title_str
+        elif pub_str:
+            dated_news_val = f"Nyhet ({pub_str})"
+        else:
+            dated_news_val = None
+        art_url = latest_dated.get("url") or ""
+        add_claim("dated_news", dated_news_val, news_ev, art_url)
+    else:
+        add_claim("dated_news", None, news_ev)
 
     add_claim("profile_summary", _val("profile_summary").get("summary"), evidence_dict.get("profile_summary"))
 

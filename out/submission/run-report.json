@@ -1,11 +1,11 @@
 {
-  "run_id": "submission-001",
-  "started_at": "2026-09-28T13:27:04.530720Z",
-  "completed_at": "2026-09-28T14:08:16.375901Z",
+  "run_id": "submission-002",
+  "started_at": "2026-10-06T20:05:11.230462Z",
+  "completed_at": "2026-10-06T21:48:18.683964Z",
   "expected_count": 1000,
   "emitted_envelopes": 1000,
-  "resumed_profiles": 450,
-  "profiles_fetched_this_run": 550,
+  "resumed_profiles": 0,
+  "profiles_fetched_this_run": 1000,
   "modules": [
     "registry",
     "accounting_obligation",
@@ -29,12 +29,12 @@
     "selected": 1000
   },
   "operations": {
-    "requests": 4820,
-    "bytes": 67274569,
+    "requests": 8518,
+    "bytes": 132567894,
     "search_queries": 0,
-    "p50_ms": 894,
-    "p95_ms": 1350,
-    "search_queries_used": 867,
+    "p50_ms": 884,
+    "p95_ms": 1170,
+    "search_queries_used": 1256,
     "third_party_cost_usd": 0.0
   },
   "validation": {

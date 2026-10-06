@@ -38,7 +38,8 @@ SOCIAL_HOSTS = {
 PRIORITY_TERMS = (
     "om-oss", "om_oss", "about", "kontakt", "contact", "ledelse", "management",
     "team", "people", "locations", "lokasjoner", "avdelinger", "butikker",
-    "news", "press", "aktuelt", "nyheter",
+    "karriere", "karrierer", "jobb", "jobber", "stilling", "stillinger", "career", "careers", "jobs",
+    "news", "press", "aktuelt", "nyheter", "presse", "medier",
 )
 
 
@@ -191,7 +192,7 @@ def normalize_social_url(url: str) -> dict[str, str] | None:
     return {"platform": platform, "url": f"https://{canonical_host}/{'/'.join(parts)}"}
 
 
-def _priority_links(base_url: str, soup: BeautifulSoup, limit: int = 4) -> list[str]:
+def _priority_links(base_url: str, soup: BeautifulSoup, limit: int = 5) -> list[str]:
     base = urllib.parse.urlparse(base_url)
     candidates: dict[str, int] = {}
     for anchor in soup.select("a[href]"):
@@ -208,7 +209,28 @@ def _priority_links(base_url: str, soup: BeautifulSoup, limit: int = 4) -> list[
         if clean.rstrip("/") == base_url.rstrip("/"):
             continue
         candidates[clean] = min(rank, candidates.get(clean, rank))
-    return [url for url, _ in sorted(candidates.items(), key=lambda item: (item[1], item[0]))[:limit]]
+
+    sorted_candidates = [url for url, _ in sorted(candidates.items(), key=lambda item: (item[1], item[0]))]
+    career_terms = ("karriere", "karrierer", "jobb", "jobber", "stilling", "stillinger", "career", "careers", "jobs")
+    news_terms = ("news", "press", "aktuelt", "nyheter", "presse", "medier")
+
+    selected: list[str] = []
+    # 1. Best career link if present
+    best_career = next((u for u in sorted_candidates if any(t in u.casefold() for t in career_terms)), None)
+    if best_career:
+        selected.append(best_career)
+
+    # 2. Best news link if present
+    best_news = next((u for u in sorted_candidates if any(t in u.casefold() for t in news_terms) and u not in selected), None)
+    if best_news:
+        selected.append(best_news)
+
+    # 3. Fill up to limit with remaining top ranked links
+    for u in sorted_candidates:
+        if u not in selected and len(selected) < limit:
+            selected.append(u)
+
+    return selected[:limit]
 
 
 def _clean_extracted_text(text: str) -> str:
@@ -235,12 +257,50 @@ def _fetch_secondary_page(url: str, *, homepage_domain: str, timeout: float, max
         raw_text = trafilatura.extract(page_html, url=final_url, include_links=False, include_tables=False, favor_precision=True) or ""
         page_text = _clean_extracted_text(raw_text)
         page_title = page_soup.title.get_text(" ", strip=True)[:500] if page_soup.title else ""
+
+        # Extract publication date if page contains datePublished or time tag
+        published_date = None
+        for script in page_soup.find_all("script", type="application/ld+json"):
+            try:
+                data = json.loads(script.string or "")
+                def _find_date(node: Any) -> str | None:
+                    if isinstance(node, dict):
+                        for k in ("datePublished", "dateCreated"):
+                            if node.get(k):
+                                return str(node[k])
+                        for child in node.values():
+                            res = _find_date(child)
+                            if res:
+                                return res
+                    elif isinstance(node, list):
+                        for child in node:
+                            res = _find_date(child)
+                            if res:
+                                return res
+                    return None
+                published_date = _find_date(data)
+                if published_date:
+                    break
+            except Exception:
+                pass
+
+        if not published_date:
+            time_tag = page_soup.select_one("time[datetime]")
+            if time_tag:
+                published_date = time_tag.get("datetime")
+
+        if not published_date:
+            meta_date = page_soup.select_one('meta[property="article:published_time"], meta[name="pubdate"], meta[name="publishdate"]')
+            if meta_date:
+                published_date = meta_date.get("content")
+
         stable_page_hash = __import__("hashlib").sha256(
             (final_url + "\n" + page_title + "\n" + page_text[:5000]).encode("utf-8")
         ).hexdigest()
         page = {
             "url": final_url,
             "title": page_title,
+            "published": published_date,
             "main_text_excerpt": page_text[:5000],
             "content_sha256": stable_page_hash,
         }
@@ -353,7 +413,7 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
         elapsed = int((time.monotonic() - started) * 1000)
         status = "not_found" if exc.code in {404, 410} else "source_error"
         return evidence("website", status, "registry_linked_company_website", normalized, note=f"HTTP {exc.code}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}
-    except urllib.error.URLError as exc:
+    except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
         if not supplied_scheme and normalized.startswith("https://"):
             first_elapsed = int((time.monotonic() - started) * 1000)
             record, metrics = fetch_website("http://" + supplied_url, timeout=timeout, max_bytes=max_bytes)
@@ -361,7 +421,17 @@ def fetch_website(url: str | None, *, timeout: float = 15.0, max_bytes: int = 2_
             metrics["latencies_ms"].insert(0, first_elapsed)
             return record, metrics
         elapsed = int((time.monotonic() - started) * 1000)
-        return evidence("website", "source_error", "registry_linked_company_website", normalized, note=f"URLError: {str(exc.reason)[:180]}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}
+        reason = getattr(exc, "reason", str(exc))
+        return evidence("website", "source_error", "registry_linked_company_website", normalized, note=f"{type(exc).__name__}: {str(reason)[:180]}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}
     except Exception as exc:
+        if not supplied_scheme and normalized.startswith("https://"):
+            first_elapsed = int((time.monotonic() - started) * 1000)
+            try:
+                record, metrics = fetch_website("http://" + supplied_url, timeout=timeout, max_bytes=max_bytes)
+                metrics["requests"] += 2
+                metrics["latencies_ms"].insert(0, first_elapsed)
+                return record, metrics
+            except Exception:
+                pass
         elapsed = int((time.monotonic() - started) * 1000)
         return evidence("website", "source_error", "registry_linked_company_website", normalized, note=f"{type(exc).__name__}: {str(exc)[:180]}"), {"requests": 2, "bytes": 0, "latencies_ms": [elapsed]}

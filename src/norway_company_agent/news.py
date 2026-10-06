@@ -67,6 +67,12 @@ def fetch_google_news_rss(
                     clean_summary = re.sub(r"<[^>]+>", " ", entry.get("summary", "") or "")
                     clean_summary = re.sub(r"\s+", " ", clean_summary).strip()[:300]
 
+                    published_parsed = entry.get("published_parsed")
+                    if published_parsed:
+                        published = time.strftime("%Y-%m-%dT%H:%M:%SZ", published_parsed)
+                    else:
+                        published = str(entry.get("published") or entry.get("updated") or "").strip()
+
                     articles.append({
                         "title": clean_title,
                         "url": link,
@@ -84,19 +90,48 @@ def fetch_google_news_rss(
     return articles[:max_results]
 
 
+def _extract_page_date(page: dict[str, Any]) -> str:
+    """Extract ISO publication date from crawled page metadata or text."""
+    if page.get("published"):
+        return str(page["published"]).strip()
+
+    text = page.get("main_text_excerpt", "") or ""
+    # Check for Norwegian publication date pattern: e.g. "Publisert 22.09.2025" or "22. september 2025"
+    m_nor = re.search(r"(?:publisert|oppdatert|dato)[:\s]+(\d{1,2})\.(\d{1,2})\.(\d{4})", text, re.IGNORECASE)
+    if m_nor:
+        day, month, year = m_nor.groups()
+        return f"{year}-{int(month):02d}-{int(day):02d}T00:00:00Z"
+
+    # Check for ISO date in text: YYYY-MM-DD
+    m_iso = re.search(r"\b(202[0-9]-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01]))\b", text)
+    if m_iso:
+        return f"{m_iso.group(1)}T00:00:00Z"
+
+    # Check for URL date patterns: /2025/09/22/ or /2025-09-22
+    url = page.get("url", "")
+    m_url = re.search(r"/(202[0-9])/(0[1-9]|1[0-2])/(0[1-9]|[12][0-9]|3[01])/", url)
+    if m_url:
+        y, m, d = m_url.groups()
+        return f"{y}-{m}-{d}T00:00:00Z"
+
+    return ""
+
+
 def extract_news_from_website(website_value: dict[str, Any]) -> list[dict[str, Any]]:
     """Extract news/press items from crawled company website pages."""
     news_items: list[dict[str, Any]] = []
 
     for page in website_value.get("pages", []):
         page_url = (page.get("url") or "").lower()
-        if any(kw in page_url for kw in ("news", "press", "aktuelt", "nyheter", "blog")):
+        if any(kw in page_url for kw in ("news", "press", "aktuelt", "nyheter", "presse", "blog", "media")):
             text = page.get("main_text_excerpt", "") or ""
             title = page.get("title", "") or ""
-            if text and len(text) > 50:
+            if text and len(text) > 30:
+                published = _extract_page_date(page)
                 news_items.append({
                     "title": title,
                     "url": page.get("url", ""),
+                    "published": published,
                     "text_excerpt": text[:500],
                     "source_type": "company_website_news",
                 })
@@ -138,11 +173,13 @@ def fetch_company_news(
                 from .search_api import search_duckduckgo
                 search_items = search_duckduckgo(f'"{clean_name}" nyheter', max_results=3)
                 for s in search_items:
+                    pub_match = re.search(r"\b(202[0-9]-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01]))\b", s.snippet)
+                    pub_date = f"{pub_match.group(1)}T00:00:00Z" if pub_match else ""
                     all_news.append({
                         "title": s.title,
                         "url": s.url,
                         "summary": s.snippet[:300],
-                        "published": "",
+                        "published": pub_date,
                         "source_name": s.source,
                         "source_type": "search_news_fallback",
                     })
@@ -156,6 +193,9 @@ def fetch_company_news(
         if key and key not in deduped:
             deduped[key] = n
     all_news = sorted(deduped.values(), key=lambda a: (str(a.get("title") or ""), str(a.get("url") or "")))
+    dated_articles = [n for n in all_news if n.get("published")]
+    dated_articles.sort(key=lambda a: str(a.get("published") or ""), reverse=True)
+    latest_dated = dated_articles[0] if dated_articles else (all_news[0] if all_news else None)
 
     if all_news:
         return evidence(
@@ -166,6 +206,7 @@ def fetch_company_news(
             value={
                 "articles": all_news,
                 "count": len(all_news),
+                "latest_dated_article": latest_dated,
                 "sources": sorted(list({n.get("source_type", "unknown") for n in all_news})),
             },
             retrieved_at=retrieved_at,
