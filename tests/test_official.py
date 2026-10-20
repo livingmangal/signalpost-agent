@@ -42,6 +42,19 @@ class OfficialNormalizationTests(unittest.TestCase):
         self.assertEqual(record["operating_result"], 0)
         self.assertEqual(record["currency"], "NOK")
 
+    def test_financial_records_sorted_descending_by_period(self):
+        body = [
+            {"id": 1, "valuta": "NOK", "regnskapsperiode": {"tilDato": "2023-12-31"}, "resultatregnskapResultat": {"driftsresultat": {"driftsresultat": 100, "driftsinntekter": {"sumDriftsinntekter": 1000}}}},
+            {"id": 2, "valuta": "NOK", "regnskapsperiode": {"tilDato": "2025-12-31"}, "resultatregnskapResultat": {"driftsresultat": {"driftsresultat": 300, "driftsinntekter": {"sumDriftsinntekter": 3000}}}},
+            {"id": 3, "valuta": "NOK", "regnskapsperiode": {"tilDato": "2024-12-31"}, "resultatregnskapResultat": {"driftsresultat": {"driftsresultat": 200, "driftsinntekter": {"sumDriftsinntekter": 2000}}}},
+        ]
+        records = normalize_financials(body)["records"]
+        self.assertEqual(records[0]["period"]["tilDato"], "2025-12-31")
+        self.assertEqual(records[0]["revenue"], 3000)
+        self.assertEqual(records[1]["period"]["tilDato"], "2024-12-31")
+        self.assertEqual(records[2]["period"]["tilDato"], "2023-12-31")
+
+
     def test_financial_history_is_sorted_and_links_to_official_pdfs(self):
         record = normalize_financial_history(["2024", "2022", "2024", "invalid"], "923609016")
         self.assertEqual(record["years"], ["2022", "2024"])

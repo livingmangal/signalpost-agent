@@ -20,7 +20,8 @@ def _get_financial_summary(profile: dict[str, Any]) -> str:
     if not records:
         return "No filed annual accounts are available in the registry."
 
-    latest = records[0]
+    latest = max(records, key=lambda r: str((r.get("period") or {}).get("tilDato") or (r.get("period") or {}).get("fraDato") or ""))
+
     period = latest.get("period", {})
     parts = []
     if period:
@@ -187,7 +188,7 @@ def _get_inference_and_boundaries_summary(profile: dict[str, Any]) -> str:
         inferences.append("Operational posture: The entity records 0 registered employees, indicating a holding, investment, asset management, or subcontracted operating model.")
 
     if fin_records:
-        latest = fin_records[0]
+        latest = max(fin_records, key=lambda r: str((r.get("period") or {}).get("tilDato") or (r.get("period") or {}).get("fraDato") or ""))
         eq = latest.get("equity")
         assets = latest.get("assets")
         if isinstance(eq, (int, float)) and isinstance(assets, (int, float)) and assets > 0:
@@ -226,6 +227,9 @@ def generate_template_summary(profile: dict[str, Any]) -> str:
         sections.append(f"**Primary industry:** {industry_desc}")
     if employees is not None:
         sections.append(f"**Registered employees:** {employees}")
+    else:
+        sections.append("**Registered employees:** Unregistered in official registry")
+
 
     # Website
     website_ev = profile.get("evidence", {}).get("website", {})

@@ -269,10 +269,11 @@ def profile_to_contract_envelope(
     # 3. Financial claims
     fin_ev = evidence_dict.get("financials")
     fin_records = ((fin_ev or {}).get("value") or {}).get("records") or []
-    latest_fin = fin_records[0] if fin_records else {}
+    latest_fin = max(fin_records, key=lambda r: str((r.get("period") or {}).get("tilDato") or (r.get("period") or {}).get("fraDato") or "")) if fin_records else {}
     add_claim("revenue", latest_fin.get("revenue"), fin_ev, f"https://data.brreg.no/regnskapsregisteret/regnskap/{org}")
     add_claim("operating_result", latest_fin.get("operating_result"), fin_ev, f"https://data.brreg.no/regnskapsregisteret/regnskap/{org}")
     add_claim("equity", latest_fin.get("equity"), fin_ev, f"https://data.brreg.no/regnskapsregisteret/regnskap/{org}")
+
 
     def _val(mod: str) -> dict[str, Any]:
         v = (evidence_dict.get(mod) or {}).get("value")

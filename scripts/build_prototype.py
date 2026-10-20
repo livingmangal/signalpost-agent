@@ -88,7 +88,30 @@ def qualification_copy(score: dict | None, independent_score: dict | None = None
 
 
 def compact(row: dict, external_observations: list[dict] | None = None) -> dict:
+    if "profile" in row and isinstance(row["profile"], dict):
+        profile_row = dict(row["profile"])
+        for k in ("sample_slice", "evaluation_split", "change_history"):
+            if k in row and k not in profile_row:
+                profile_row[k] = row[k]
+        row = profile_row
+    elif "claims" in row and isinstance(row.get("claims"), list):
+        claims_map = {c.get("field"): c.get("value") for c in row.get("claims", []) if isinstance(c, dict)}
+        row = {
+            "organisation_number": row.get("organisation_number"),
+            "name": claims_map.get("company_name", ""),
+            "legal_form": claims_map.get("legal_form", ""),
+            "employees": claims_map.get("employee_count"),
+            "municipality": claims_map.get("municipality", ""),
+            "industry_code": claims_map.get("nace_code", ""),
+            "industry_label": claims_map.get("nace_label", ""),
+            "website": claims_map.get("website_url"),
+            "bankrupt": bool(claims_map.get("is_bankrupt", False)),
+            "liquidating": bool(claims_map.get("is_liquidating", False)),
+            "evidence": {},
+        }
     evidence = row.get("evidence", {})
+    if not isinstance(evidence, dict):
+        evidence = {}
     financial = evidence.get("financials", {})
     financial_history = evidence.get("financial_history", {})
     roles = evidence.get("roles", {})
@@ -244,13 +267,15 @@ def build(rows: list[dict], score: dict | None, control_loop: dict | None = None
     independent_payload = json.dumps(independent_score or {}, ensure_ascii=False).replace("</", "<\\/")
     status_copy, boundary_copy = (html.escape(value) for value in qualification_copy(score, independent_score))
     template = load_template()
-    return template.format(
-        boundary_copy=boundary_copy,
-        payload=payload,
-        score_payload=score_payload,
-        independent_payload=independent_payload,
-        control_payload=control_payload,
+    return (
+        template
+        .replace("{boundary_copy}", boundary_copy)
+        .replace("{payload}", payload)
+        .replace("{score_payload}", score_payload)
+        .replace("{independent_payload}", independent_payload)
+        .replace("{control_payload}", control_payload)
     )
+
 
 
 if __name__ == "__main__":
