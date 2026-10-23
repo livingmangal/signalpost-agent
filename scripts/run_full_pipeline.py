@@ -27,6 +27,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -347,12 +348,12 @@ def main() -> None:
     # Load environment
     load_environment(ROOT / ".env")
 
-    # Set search budget (spread evenly across batch)
-    reset_search_budget(args.max_search_queries, total_companies=len(orgs))
-
     # Read organisation numbers
     organisation_inputs = read_organisation_inputs(args.organisations)
     orgs = [item["organisation_number"] for item in organisation_inputs]
+
+    # Set search budget (spread evenly across batch)
+    reset_search_budget(args.max_search_queries, total_companies=len(orgs))
     if len(orgs) != args.expected_count:
         raise SystemExit(f"Expected {args.expected_count} organisations, received {len(orgs)}")
 
