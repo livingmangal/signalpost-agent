@@ -46,6 +46,9 @@ def fetch_json(url: str, *, timeout: float = 20.0, attempts: int = 3) -> FetchRe
         except urllib.error.HTTPError as exc:
             elapsed = int((time.monotonic() - started) * 1000)
             raw = exc.read()
+            if exc.code == 429 and attempt + 1 < attempts:
+                time.sleep(1.0 * (2 ** attempt))
+                continue
             if exc.code in {403, 404, 410, 429}:
                 return FetchResult(url, exc.code, elapsed, len(raw), error=f"HTTP {exc.code}", content_sha256=hashlib.sha256(raw).hexdigest(), retrieved_at=_utc_now())
             last_error = f"HTTP {exc.code}"

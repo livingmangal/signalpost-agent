@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import html
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -217,7 +218,27 @@ def compact(row: dict, external_observations: list[dict] | None = None) -> dict:
         "adverse": bool(row["bankrupt"] or row["liquidating"]),
         "slice": row.get("sample_slice"),
         "split": row.get("evaluation_split"),
-        "latestAccounts": row.get("latest_submitted_accounts"),
+        "latestAccounts": (
+            max(
+                [int(y) for y in (financial_history.get("value") or {}).get("years", []) if str(y).isdigit()]
+                + [
+                    int(m.group(1))
+                    for r in (financial.get("value") or {}).get("records", [])
+                    if (m := re.match(r"^(\d{4})", str((r.get("period") or {}).get("tilDato") or (r.get("period") or {}).get("fraDato") or "")))
+                ]
+                + ([int(row.get("latest_submitted_accounts"))] if row.get("latest_submitted_accounts") and str(row.get("latest_submitted_accounts")).isdigit() else [])
+            )
+            if (
+                [int(y) for y in (financial_history.get("value") or {}).get("years", []) if str(y).isdigit()]
+                + [
+                    int(m.group(1))
+                    for r in (financial.get("value") or {}).get("records", [])
+                    if (m := re.match(r"^(\d{4})", str((r.get("period") or {}).get("tilDato") or (r.get("period") or {}).get("fraDato") or "")))
+                ]
+                + ([int(row.get("latest_submitted_accounts"))] if row.get("latest_submitted_accounts") and str(row.get("latest_submitted_accounts")).isdigit() else [])
+            )
+            else row.get("latest_submitted_accounts")
+        ),
         "registrySource": evidence.get("registry", {}).get("source_url"),
         "registry": meta(evidence.get("registry", {})),
         "accounting": {**meta(accounting), "value": accounting.get("value") or {}},

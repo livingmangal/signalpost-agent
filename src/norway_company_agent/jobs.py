@@ -155,7 +155,7 @@ def discover_jobs_via_search(
     jobs: list[dict[str, Any]] = []
     if clean_name:
         finn_results = search_duckduckgo(
-            f'site:finn.no/job "{clean_name}"', max_results=5
+            f'site:finn.no/job "{clean_name}"', max_results=5, org=org_number, priority=2
         )
         for r in finn_results:
             if "finn.no" in r.url.lower() and "/job" in r.url.lower():

@@ -178,9 +178,29 @@ def enrich_profile(
                 retrieved_at=utc_now(),
             )
 
-    # 6. Annual report PDF (latest year only to save time)
+    # 6. Annual report PDF (always newest year filed across history, financials, and live registry)
+    candidate_years: list[int] = []
+    fin_hist_years = ((profile.get("evidence", {}).get("financial_history", {}).get("value") or {}).get("years") or [])
+    for y in fin_hist_years:
+        if str(y).isdigit():
+            candidate_years.append(int(y))
+    fin_recs = ((profile.get("evidence", {}).get("financials", {}).get("value") or {}).get("records") or [])
+    for r in fin_recs:
+        p_date = str((r.get("period") or {}).get("tilDato") or (r.get("period") or {}).get("fraDato") or "")
+        m = re.match(r"^(\d{4})", p_date)
+        if m:
+            candidate_years.append(int(m.group(1)))
+    live_val = ((profile.get("evidence", {}).get("registry_live", {}).get("value") or {}).get("latest_submitted_accounts"))
+    if live_val and str(live_val).isdigit():
+        candidate_years.append(int(live_val))
+    prof_val = profile.get("latest_submitted_accounts")
+    if prof_val and str(prof_val).isdigit():
+        candidate_years.append(int(prof_val))
+    latest_year = max(candidate_years) if candidate_years else None
+    if latest_year:
+        profile["latest_submitted_accounts"] = latest_year
+
     if enable_pdf:
-        latest_year = profile.get("latest_submitted_accounts")
         if latest_year:
             try:
                 profile["evidence"]["annual_report_pdf"] = fetch_annual_report(org, latest_year)
@@ -293,6 +313,7 @@ def enrich_profile(
         "elapsed_ms": elapsed_ms,
     }
     profile["run_metrics"] = metric
+    get_search_budget().complete_company(org)
     return profile, metric
 
 
@@ -326,8 +347,8 @@ def main() -> None:
     # Load environment
     load_environment(ROOT / ".env")
 
-    # Set search budget
-    reset_search_budget(args.max_search_queries)
+    # Set search budget (spread evenly across batch)
+    reset_search_budget(args.max_search_queries, total_companies=len(orgs))
 
     # Read organisation numbers
     organisation_inputs = read_organisation_inputs(args.organisations)

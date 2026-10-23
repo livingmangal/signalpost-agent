@@ -91,7 +91,7 @@ def discover_social_via_search(
 
     # Search for LinkedIn company page
     results = search_duckduckgo(
-        f'site:linkedin.com/company "{clean_name}"', max_results=3
+        f'site:linkedin.com/company "{clean_name}"', max_results=3, org=org_number, priority=2
     )
     for r in results:
         if "linkedin.com/company" in r.url.lower():

@@ -113,6 +113,39 @@ class PrototypeTests(unittest.TestCase):
         self.assertEqual(res_contract["employees"], 20000)
 
 
+
+    def test_compact_always_picks_newest_year_filed(self):
+        row = {
+            "organisation_number": "923609016",
+            "name": "Equinor ASA",
+            "legal_form": "ASA",
+            "employees": 20000,
+            "municipality": "STAVANGER",
+            "industry_code": "06.100",
+            "industry_label": "Oil & Gas",
+            "website": "https://www.equinor.com",
+            "bankrupt": False,
+            "liquidating": False,
+            "latest_submitted_accounts": "2023",
+            "evidence": {
+                "financial_history": {
+                    "status": "available",
+                    "value": {"years": ["2022", "2023", "2024"]}
+                },
+                "financials": {
+                    "status": "available",
+                    "value": {
+                        "records": [
+                            {"period": {"tilDato": "2025-12-31"}, "revenue": 500000},
+                            {"period": {"tilDato": "2024-12-31"}, "revenue": 450000},
+                        ]
+                    }
+                }
+            },
+        }
+        compacted = compact_prototype(row)
+        self.assertEqual(compacted["latestAccounts"], 2025)
+
 if __name__ == "__main__":
     unittest.main()
 

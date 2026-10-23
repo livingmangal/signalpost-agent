@@ -93,5 +93,28 @@ class DiscoveryTests(unittest.TestCase):
         self.assertTrue(decision["abstained"])
 
 
+
+    def test_search_budget_pacing_prevents_early_exhaustion(self):
+        from norway_company_agent.search_api import SearchBudget
+
+        budget = SearchBudget(max_queries=10, total_companies=10)
+        # First company can execute 1 query
+        self.assertTrue(budget.can_query(org="111", priority=1))
+        self.assertTrue(budget.record_query(org="111"))
+
+        # First company cannot exceed its fair batch allocation
+        self.assertFalse(budget.can_query(org="111", priority=1))
+
+        # Subsequent companies still have available query slots
+        self.assertTrue(budget.can_query(org="222", priority=1))
+        self.assertTrue(budget.record_query(org="222"))
+        budget.complete_company("111")
+        budget.complete_company("222")
+
+        # When remaining queries <= remaining companies, priority > 1 is suppressed to preserve quota
+        # Here 8 queries remain for 8 companies (rate = 1.0)
+        self.assertFalse(budget.can_query(org="333", priority=2))
+        self.assertTrue(budget.can_query(org="333", priority=1))
+
 if __name__ == "__main__":
     unittest.main()

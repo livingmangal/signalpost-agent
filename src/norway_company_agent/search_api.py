@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import re
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -40,14 +41,73 @@ class SearchBudget:
     brave_used: int = 0
     tavily_used: int = 0
     serpapi_used: int = 0
+    total_companies: int = 1
+    companies_completed: int = 0
+    company_queries: dict[str, int] = field(default_factory=dict)
+    _lock: threading.Lock = field(default_factory=threading.Lock)
 
     @property
     def remaining(self) -> int:
-        return self.max_queries - self.queries_used
+        with self._lock:
+            return max(0, self.max_queries - self.queries_used)
 
     @property
     def exhausted(self) -> bool:
-        return self.queries_used >= self.max_queries
+        with self._lock:
+            return self.queries_used >= self.max_queries
+
+    def can_query(self, provider: str = "general", org: str | None = None, priority: int = 1) -> bool:
+        """Evaluate if query is permissible under batch pacing constraints."""
+        with self._lock:
+            if self.queries_used >= self.max_queries:
+                return False
+            if provider == "brave" and self.brave_used >= self.max_brave_queries:
+                return False
+            if provider == "tavily" and self.tavily_used >= self.max_tavily_queries:
+                return False
+            if provider == "serpapi" and self.serpapi_used >= self.max_serpapi_queries:
+                return False
+
+            if self.total_companies > 0 and org:
+                remaining_companies = max(1, self.total_companies - self.companies_completed)
+                remaining_queries = max(0, self.max_queries - self.queries_used)
+                current_used = self.company_queries.get(org, 0)
+
+                # If remaining budget is less than or equal to remaining companies,
+                # strictly reserve budget for priority 1 (website discovery) with max 1 query per company
+                if remaining_queries <= remaining_companies:
+                    if priority > 1:
+                        return False
+                    if current_used >= 1:
+                        return False
+                else:
+                    fair_share = max(1, min(2, remaining_queries // remaining_companies))
+                    if current_used >= fair_share:
+                        return False
+
+            return True
+
+    def record_query(self, provider: str = "duckduckgo", org: str | None = None) -> bool:
+        """Atomically record query utilization."""
+        with self._lock:
+            if self.queries_used >= self.max_queries:
+                return False
+            self.queries_used += 1
+            if provider == "brave":
+                self.brave_used += 1
+            elif provider == "tavily":
+                self.tavily_used += 1
+            elif provider == "serpapi":
+                self.serpapi_used += 1
+
+            if org:
+                self.company_queries[org] = self.company_queries.get(org, 0) + 1
+            return True
+
+    def complete_company(self, org: str | None = None) -> None:
+        """Signal company completion to advance batch progress."""
+        with self._lock:
+            self.companies_completed += 1
 
 
 _search_budget = SearchBudget()
@@ -57,17 +117,18 @@ def get_search_budget() -> SearchBudget:
     return _search_budget
 
 
-def reset_search_budget(max_queries: int = 1000) -> None:
+def reset_search_budget(max_queries: int = 1000, total_companies: int = 1) -> None:
     global _search_budget
-    _search_budget = SearchBudget(max_queries=max_queries)
+    _search_budget = SearchBudget(max_queries=max_queries, total_companies=max(1, total_companies))
 
 
-def search_duckduckgo(query: str, max_results: int = 8) -> list[SearchResult]:
+def search_duckduckgo(query: str, max_results: int = 8, org: str | None = None, priority: int = 1) -> list[SearchResult]:
     """Search using DuckDuckGo (no API key needed)."""
     budget = get_search_budget()
-    if budget.exhausted:
+    if not budget.can_query(provider="duckduckgo", org=org, priority=priority):
         return []
-    budget.queries_used += 1
+    if not budget.record_query(provider="duckduckgo", org=org):
+        return []
     try:
         from duckduckgo_search import DDGS
         with DDGS() as ddgs:
@@ -90,16 +151,16 @@ def _get_api_keys(env_var: str) -> list[str]:
     return [k.strip() for k in raw.split(",") if k.strip()]
 
 
-def search_brave(query: str, max_results: int = 8) -> list[SearchResult]:
+def search_brave(query: str, max_results: int = 8, org: str | None = None, priority: int = 1) -> list[SearchResult]:
     """Search using Brave Search API (supports single key or comma-separated pool)."""
     keys = _get_api_keys("BRAVE_API_KEY")
     if not keys:
         return []
     budget = get_search_budget()
-    if budget.brave_used >= budget.max_brave_queries:
+    if not budget.can_query(provider="brave", org=org, priority=priority):
         return []
-    budget.queries_used += 1
-    budget.brave_used += 1
+    if not budget.record_query(provider="brave", org=org):
+        return []
 
     for api_key in keys:
         try:
@@ -129,16 +190,16 @@ def search_brave(query: str, max_results: int = 8) -> list[SearchResult]:
     return []
 
 
-def search_tavily(query: str, max_results: int = 5) -> list[SearchResult]:
+def search_tavily(query: str, max_results: int = 5, org: str | None = None, priority: int = 1) -> list[SearchResult]:
     """Search using Tavily Search API (supports single key or comma-separated pool)."""
     keys = _get_api_keys("TAVILY_API_KEY")
     if not keys:
         return []
     budget = get_search_budget()
-    if budget.tavily_used >= budget.max_tavily_queries:
+    if not budget.can_query(provider="tavily", org=org, priority=priority):
         return []
-    budget.queries_used += 1
-    budget.tavily_used += 1
+    if not budget.record_query(provider="tavily", org=org):
+        return []
 
     for api_key in keys:
         try:
@@ -175,16 +236,16 @@ def search_tavily(query: str, max_results: int = 5) -> list[SearchResult]:
     return []
 
 
-def search_serpapi(query: str, max_results: int = 5) -> list[SearchResult]:
+def search_serpapi(query: str, max_results: int = 5, org: str | None = None, priority: int = 1) -> list[SearchResult]:
     """Search using SerpAPI (free tier: 100 queries/month)."""
     api_key = os.environ.get("SERPAPI_API_KEY", "").strip()
     if not api_key:
         return []
     budget = get_search_budget()
-    if budget.serpapi_used >= budget.max_serpapi_queries:
+    if not budget.can_query(provider="serpapi", org=org, priority=priority):
         return []
-    budget.queries_used += 1
-    budget.serpapi_used += 1
+    if not budget.record_query(provider="serpapi", org=org):
+        return []
     try:
         url = f"https://serpapi.com/search.json?q={urllib.parse.quote(query)}&num={max_results}&api_key={api_key}"
         req = urllib.request.Request(url, headers={"User-Agent": "BuilderrAgent/1.0"})
@@ -206,7 +267,7 @@ def search_serpapi(query: str, max_results: int = 5) -> list[SearchResult]:
 
 def search_wikipedia_norway(query: str, max_results: int = 3) -> list[SearchResult]:
     """Search Norwegian Wikipedia for verified corporate background (100% free open API)."""
-    clean_query = re.sub(r"\b(AS|ASA|ANS|DA|ENK|NUF)\b", "", query, flags=re.IGNORECASE).strip()
+    clean_query = re.sub(r"(AS|ASA|ANS|DA|ENK|NUF)", "", query, flags=re.IGNORECASE).strip()
     if not clean_query or len(clean_query) < 3:
         return []
     try:
@@ -222,7 +283,6 @@ def search_wikipedia_norway(query: str, max_results: int = 3) -> list[SearchResu
         for it in items[:max_results]:
             title = it.get("title", "")
             page_url = f"https://no.wikipedia.org/wiki/{urllib.parse.quote(title)}"
-            # Strip html tags from snippet
             snippet = re.sub(r"<[^>]+>", "", it.get("snippet", ""))
             results.append(SearchResult(
                 title=title,
@@ -256,34 +316,34 @@ def search_company(
                 seen_urls.add(normalized)
                 all_results.append(r)
 
-    clean_name = re.sub(r"\b(AS|ASA|ANS|DA|ENK|NUF)\b", "", company_name, flags=re.IGNORECASE).strip()
+    clean_name = re.sub(r"(AS|ASA|ANS|DA|ENK|NUF)", "", company_name, flags=re.IGNORECASE).strip()
 
     # 1. Try Brave Search API if key provided (best coverage)
     if os.environ.get("BRAVE_API_KEY"):
-        _add(search_brave(f'"{company_name}" {org_number}', max_results=5))
+        _add(search_brave(f'"{company_name}" {org_number}', max_results=5, org=org_number, priority=1))
         if clean_name:
-            _add(search_brave(f'"{clean_name}" Norway', max_results=4))
+            _add(search_brave(f'"{clean_name}" Norway', max_results=4, org=org_number, priority=1))
         if include_site_queries and clean_name:
-            _add(search_brave(f'site:finn.no "{clean_name}"', max_results=3))
+            _add(search_brave(f'site:finn.no "{clean_name}"', max_results=3, org=org_number, priority=1))
 
     # 2. Try Tavily Search API if key provided
     if os.environ.get("TAVILY_API_KEY") and len(all_results) < 3:
-        _add(search_tavily(f'"{company_name}" Norway {org_number}', max_results=4))
+        _add(search_tavily(f'"{company_name}" Norway {org_number}', max_results=4, org=org_number, priority=1))
         if include_site_queries and clean_name:
-            _add(search_tavily(f'"{clean_name}" site:finn.no/job', max_results=3))
+            _add(search_tavily(f'"{clean_name}" site:finn.no/job', max_results=3, org=org_number, priority=1))
 
     # 3. Try SerpAPI if key provided
     if os.environ.get("SERPAPI_API_KEY") and len(all_results) < 3:
-        _add(search_serpapi(f'"{company_name}" {org_number}', max_results=4))
+        _add(search_serpapi(f'"{company_name}" {org_number}', max_results=4, org=org_number, priority=1))
 
     # 4. Try DuckDuckGo
     if len(all_results) < 2:
-        _add(search_duckduckgo(f'"{company_name}" {org_number}', max_results=5))
-        if clean_name:
-            _add(search_duckduckgo(f'"{clean_name}" Norway', max_results=4))
+        _add(search_duckduckgo(f'"{company_name}" {org_number}', max_results=5, org=org_number, priority=1))
+        if clean_name and len(all_results) < 2:
+            _add(search_duckduckgo(f'"{clean_name}" Norway', max_results=4, org=org_number, priority=1))
 
     # 5. Open Wikipedia Search (100% free, reliable supplementary facts)
-    if clean_name:
+    if clean_name and len(all_results) < 3:
         _add(search_wikipedia_norway(clean_name, max_results=2))
 
     return all_results
@@ -325,7 +385,6 @@ def discover_website_candidates(
         except Exception:
             continue
 
-        # Skip social media, search engines, government registries, directories, databases
         skip_domains = {
             "linkedin.com", "facebook.com", "instagram.com", "twitter.com",
             "x.com", "youtube.com", "tiktok.com", "brreg.no", "proff.no", "purehelp.no",
@@ -342,7 +401,6 @@ def discover_website_candidates(
         }
         if any(domain == skip or domain.endswith("." + skip) for skip in skip_domains):
             continue
-        # Also skip directory lookup paths
         parsed_path = parsed.path.lower()
         if re.search(r"^/(?:company|selskap|bedrift|foretak|bedrifter|b|detaljert-informasjon|profil|companies|leis|lei)/", parsed_path):
             continue
@@ -352,13 +410,11 @@ def discover_website_candidates(
             signals = []
             confidence = 0.3
 
-            # Check if org number appears in snippet
             org_clean = org_number.replace(" ", "")
             if org_clean in r.snippet.replace(" ", ""):
                 signals.append("org_number_in_snippet")
                 confidence = 0.85
 
-            # Check if company name appears in title
             name_tokens = set(company_name.lower().split())
             title_tokens = set(r.title.lower().split())
             overlap = len(name_tokens & title_tokens) / max(len(name_tokens), 1)
@@ -366,7 +422,6 @@ def discover_website_candidates(
                 signals.append("name_in_title")
                 confidence = max(confidence, 0.6)
 
-            # Norwegian domain bonus
             if ext.suffix == "no":
                 signals.append("norwegian_domain")
                 confidence = min(confidence + 0.1, 0.95)
@@ -378,5 +433,4 @@ def discover_website_candidates(
                 "signals": signals,
             }
 
-    # Sort by confidence descending, tie-breaking by URL
     return sorted(candidates.values(), key=lambda x: (-x["confidence"], str(x.get("url") or "")))[:5]

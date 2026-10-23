@@ -171,7 +171,12 @@ def fetch_company_news(
         if clean_name and len(clean_name) >= 3:
             try:
                 from .search_api import search_duckduckgo
-                search_items = search_duckduckgo(f'"{clean_name}" nyheter', max_results=3)
+                search_items = search_duckduckgo(
+                    f'"{clean_name}" nyheter',
+                    max_results=3,
+                    org=profile.get("organisation_number"),
+                    priority=2,
+                )
                 for s in search_items:
                     pub_match = re.search(r"\b(202[0-9]-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01]))\b", s.snippet)
                     pub_date = f"{pub_match.group(1)}T00:00:00Z" if pub_match else ""
